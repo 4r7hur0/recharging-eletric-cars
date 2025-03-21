@@ -9,19 +9,13 @@ import (
 
 var reservationQueue []string
 
-type Coords struct {
+type ChargingPoint struct {
+	ID        string  `json:"id"`
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
+	Available bool    `json:"available"`
+	Queue     int     `json:"queue_size"`
 }
-
-type ChargingPointUpdate struct {
-	Type       string  `json:"type"`
-	IDPoint    string  `json:"id_point"`
-	Available  bool    `json:"available"`
-	Location   *Coords `json:"location"`
-	Timestamp  string  `json:"timestamp"` 
-}
-
 
 type ReservationRequest struct {
 	VehicleID string `json:"vehicleid"`
@@ -31,44 +25,55 @@ func addReserve(vehicleID string) {
 	reservationQueue = append(reservationQueue, vehicleID)
 }	
 
-func main() {
-	conn, err := net.Dial("tcp", "localhost:8080")
-	if err != nil {
-		fmt.Println("Error connecting to server:", err)
-		return
-	}
+func sendStatusUpdate (){
+	addr, _ := net.ResolveUDPAddr("udp", "server_adress:9090")
+	conn, _ := net.DialUDP("udp", nil, addr)
 	defer conn.Close()
 
-	// Request information from the user
-	var idPoint string
-	var latitude, longitude float64
+	cp := ChargingPoint{
 
-	fmt.Print("Enter the charging point ID: ")
-	fmt.Scanln(&idPoint)
-
-	fmt.Print("Enter latitude: ")
-	fmt.Scanln(&latitude)
-
-	fmt.Print("Enter longitude: ")
-	fmt.Scanln(&longitude)
-
-	// Converting numeric input to boolean
-	availability := false
-
-	// Create and send the message
-	msg := ChargingPointUpdate{
-		Type:      "charging_point",
-		IDPoint:   idPoint,
-		Available: availability,
-		Location:  &Coords{Latitude: latitude, Longitude: longitude},
-		Timestamp: time.Now().Format(time.RFC3339),
+		ID: "CP01",
+		Latitude: 0,
+		Longitude: 0,
+		Available: true,
+		Queue: len(reservationQueue),
 	}
 
-	data, _ := json.Marshal(msg)
-	conn.Write(data)
-
-	// Read the server response
-	buffer := make([]byte, 1024)
-	n, _ := conn.Read(buffer)
-	fmt.Println("Server response:", string(buffer[:n]))
+	for {
+		cp.Queue = len(reservationQueue)
+		data, _ := json.Marshal(cp)
+		conn.Write(data)
+		time.Sleep(5 * time.Second)
+	}
 }
+
+func tcpListener (){
+	listener, _ := net.Listen("tcp", ":8081")
+	defer listener.Close()
+	fmt.Println("tamo ouvindo")
+
+	for {
+		//read the server response
+		conn, _ := listener.Accept()
+		buffer := make([]byte, 1024)
+		n, _ := conn.Read(buffer)
+
+		//take the ID from the vehicle and deserialize
+		var reserve ReservationRequest
+		json.Unmarshal(buffer [:n], &reserve)
+
+		//add reserve in the slice
+		addReserve(reserve.VehicleID)
+		fmt.Println("New reservation made: ", reserve.VehicleID)
+	}
+}
+
+func main () {
+	go sendStatusUpdate()
+	go tcpListener()
+
+	select {}
+
+}
+
+
