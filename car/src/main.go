@@ -43,12 +43,50 @@ type Coords struct {
 	Longitude float64 `json:"longitude"`
 }
 
+// Estrutura para solicitação de reserva de ponto
+type ReservaPonto struct {
+	IDVeiculo      string `json:"id_veiculo"`
+	IDPontoRecarga string `json:"id_ponto_recarga"`
+	TempoEstimado  int    `json:"tempo_estimado"` // em minutos
+	Timestamp      string `json:"timestamp"`
+}
+
+func (r *ReservaPonto) ToJSON() ([]byte, error) {
+	return json.Marshal(r)
+}
+
+// Estrutura para confirmação de chegada
+type ConfirmacaoChegada struct {
+	IDVeiculo      string `json:"id_veiculo"`
+	IDPontoRecarga string `json:"id_ponto_recarga"`
+	Timestamp      string `json:"timestamp"`
+}
+
+func (c *ConfirmacaoChegada) ToJSON() ([]byte, error) {
+	return json.Marshal(c)
+}
+
+// Estrutura para encerramento de sessão
+type EncerramentoSessao struct {
+	IDVeiculo        string  `json:"id_veiculo"`
+	IDPontoRecarga   string  `json:"id_ponto_recarga"`
+	EnergiaConsumida float64 `json:"energia_consumida"`
+	Timestamp        string  `json:"timestamp"`
+}
+
+func (e *EncerramentoSessao) ToJSON() ([]byte, error) {
+	return json.Marshal(e)
+}
+
 func main() {
 	for {
 		fmt.Println("\n--- Menu ---")
 		fmt.Println("1. Enviar notificação de bateria")
 		fmt.Println("2. Consultar pontos de recarga disponíveis")
-		fmt.Println("3. Sair")
+		fmt.Println("3. Solicitar reserva de ponto")
+		fmt.Println("4. Confirmar chegada ao ponto")
+		fmt.Println("5. Encerrar sessão de carregamento")
+		fmt.Println("6. Sair")
 		fmt.Print("Selecione uma opção: ")
 
 		var opcao int
@@ -64,6 +102,12 @@ func main() {
 		case 2:
 			consultarPontos()
 		case 3:
+			solicitarReserva()
+		case 4:
+			confirmarChegada()
+		case 5:
+			encerrarSessao()
+		case 6:
 			fmt.Println("Saindo...")
 			os.Exit(0)
 		default:
@@ -139,6 +183,85 @@ func consultarPontos() {
 	}
 
 	enviarMensagem(consulta)
+}
+
+// Função para solicitar reserva de ponto
+func solicitarReserva() {
+	fmt.Println("\n--- Solicitação de Reserva de Ponto ---")
+
+	fmt.Print("Digite o ID do veículo: ")
+	var idVeiculo string
+	fmt.Scanln(&idVeiculo)
+
+	fmt.Print("Digite o ID do ponto de recarga: ")
+	var idPontoRecarga string
+	fmt.Scanln(&idPontoRecarga)
+
+	fmt.Print("Digite o tempo estimado de chegada (em minutos): ")
+	var tempoEstimado int
+	fmt.Scanln(&tempoEstimado)
+
+	timestamp := time.Now().Format("2006-01-02T15:04:05")
+
+	reserva := &ReservaPonto{
+		IDVeiculo:      idVeiculo,
+		IDPontoRecarga: idPontoRecarga,
+		TempoEstimado:  tempoEstimado,
+		Timestamp:      timestamp,
+	}
+
+	enviarMensagem(reserva)
+}
+
+// Função para confirmar chegada ao ponto
+func confirmarChegada() {
+	fmt.Println("\n--- Confirmação de Chegada ---")
+
+	fmt.Print("Digite o ID do veículo: ")
+	var idVeiculo string
+	fmt.Scanln(&idVeiculo)
+
+	fmt.Print("Digite o ID do ponto de recarga: ")
+	var idPontoRecarga string
+	fmt.Scanln(&idPontoRecarga)
+
+	timestamp := time.Now().Format("2006-01-02T15:04:05")
+
+	confirmacao := &ConfirmacaoChegada{
+		IDVeiculo:      idVeiculo,
+		IDPontoRecarga: idPontoRecarga,
+		Timestamp:      timestamp,
+	}
+
+	enviarMensagem(confirmacao)
+}
+
+// Função para encerrar sessão de carregamento
+func encerrarSessao() {
+	fmt.Println("\n--- Encerramento de Sessão de Carregamento ---")
+
+	fmt.Print("Digite o ID do veículo: ")
+	var idVeiculo string
+	fmt.Scanln(&idVeiculo)
+
+	fmt.Print("Digite o ID do ponto de recarga: ")
+	var idPontoRecarga string
+	fmt.Scanln(&idPontoRecarga)
+
+	fmt.Print("Digite a energia consumida (kWh): ")
+	var energiaConsumida float64
+	fmt.Scanln(&energiaConsumida)
+
+	timestamp := time.Now().Format("2006-01-02T15:04:05")
+
+	encerramento := &EncerramentoSessao{
+		IDVeiculo:        idVeiculo,
+		IDPontoRecarga:   idPontoRecarga,
+		EnergiaConsumida: energiaConsumida,
+		Timestamp:        timestamp,
+	}
+
+	enviarMensagem(encerramento)
 }
 
 // Função genérica para enviar uma mensagem (notificação ou consulta) via TCP
