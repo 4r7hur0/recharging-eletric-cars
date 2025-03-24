@@ -25,30 +25,57 @@ func addReserve(vehicleID string) {
 	reservationQueue = append(reservationQueue, vehicleID)
 }	
 
-func sendStatusUpdate (){
-	addr, _ := net.ResolveUDPAddr("udp", "server_adress:9090")
-	conn, _ := net.DialUDP("udp", nil, addr)
-	defer conn.Close()
+func sendStatusUpdate() {
+    addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:9090")
+    if err != nil {
+        fmt.Println("Error resolving UDP address:", err)
+        return
+    }
 
-	cp := ChargingPoint{
+    conn, err := net.DialUDP("udp", nil, addr)
+    if err != nil {
+        fmt.Println("Error creating UDP connection:", err)
+        return
+    }
+    defer conn.Close()
 
-		ID: "CP01",
-		Latitude: 0,
-		Longitude: 0,
-		Available: true,
-		Queue: len(reservationQueue),
+    cp := ChargingPoint{
+        ID:        "CP01",
+        Latitude:  0,
+        Longitude: 0,
+        Available: true,
+        Queue:     len(reservationQueue),
+    }
+
+    for {
+        cp.Queue = len(reservationQueue)
+        data, err := json.Marshal(cp)
+        if err != nil {
+            fmt.Println("Error marshaling JSON:", err)
+            return
+        }
+
+        _, err = conn.Write(data)
+        if err != nil {
+            fmt.Println("Error sending data:", err)
+            return
+        }
+
+        time.Sleep(5 * time.Second)
+    }
+}
+
+func isVehicleInQueue(vehicleID string) bool {
+	for _, v := range reservationQueue {
+		if v == vehicleID {
+			return true
+		}
 	}
-
-	for {
-		cp.Queue = len(reservationQueue)
-		data, _ := json.Marshal(cp)
-		conn.Write(data)
-		time.Sleep(5 * time.Second)
-	}
+	return false
 }
 
 func tcpListener (){
-	listener, _ := net.Listen("tcp", ":8081")
+	listener, _ := net.Listen("tcp", ":8080")
 	defer listener.Close()
 	fmt.Println("tamo ouvindo")
 
@@ -63,8 +90,14 @@ func tcpListener (){
 		json.Unmarshal(buffer [:n], &reserve)
 
 		//add reserve in the slice
+		if isVehicleInQueue(reserve.VehicleID) {
+			fmt.Println("Vehicle alredy in queue:", reserve.VehicleID)
+			conn.Write([]byte("Error: Vehicle alredy in queue \n"))
+		} else {
 		addReserve(reserve.VehicleID)
 		fmt.Println("New reservation made: ", reserve.VehicleID)
+		conn.Write([]byte("Reserve confirmed \n"))
+		}
 	}
 }
 
