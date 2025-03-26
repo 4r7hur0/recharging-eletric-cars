@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
+	"sort"
 	"sync"
 )
 
@@ -20,6 +22,7 @@ type ChargingPoint struct {
 	Longitude float64 `json:"longitude"`
 	Available bool    `json:"available"`
 	Queue     int     `json:"queue_size"`
+	Distance  float64 `json:"distance,omitempty"` // Distance from the car
 }
 
 // Car represents a car in the system
@@ -50,16 +53,30 @@ var (
 
 // calculateDistance calculates the distance between two points using the Haversine formula
 func calculateDistance(lat1, lon1, lat2, lon2 float64) float64 {
-	// TODO: Implement Haversine formula for accurate distance calculation
-	// For now, returning a simple Manhattan distance
-	return abs(lat1-lat2) + abs(lon1-lon2)
-}
+	// Convert latitude and longitude to radians
+	lat1Rad := lat1 * math.Pi / 180
+	lon1Rad := lon1 * math.Pi / 180
+	lat2Rad := lat2 * math.Pi / 180
+	lon2Rad := lon2 * math.Pi / 180
 
-func abs(x float64) float64 {
-	if x < 0 {
-		return -x
-	}
-	return x
+	// Earth's radius in kilometers
+	const R = 6371.0
+
+	// Differences in coordinates
+	dlat := lat2Rad - lat1Rad
+	dlon := lon2Rad - lon1Rad
+
+	// Haversine formula
+	a := math.Sin(dlat/2)*math.Sin(dlat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
+			math.Sin(dlon/2)*math.Sin(dlon/2)
+
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	// Calculate distance in kilometers
+	distance := R * c
+
+	return distance
 }
 
 func handleCarConnection(conn net.Conn) {
@@ -92,15 +109,29 @@ func handleCarConnection(conn net.Conn) {
 			cars[batteryMsg.IDVeiculo] = &Car{ID: batteryMsg.IDVeiculo}
 			mu.Unlock()
 
-			// Find all available charging points
+			// Find all charging points and calculate distances
 			var availablePoints []ChargingPoint
 			mu.RLock()
 			for _, cp := range chargingPoints {
-				if cp.Available {
-					availablePoints = append(availablePoints, *cp)
-				}
+				// Calculate distance from car to charging point
+				distance := calculateDistance(
+					batteryMsg.Localizacao.Latitude,
+					batteryMsg.Localizacao.Longitude,
+					cp.Latitude,
+					cp.Longitude,
+				)
+
+				// Create a copy of the charging point with distance
+				pointWithDistance := *cp
+				pointWithDistance.Distance = distance
+				availablePoints = append(availablePoints, pointWithDistance)
 			}
 			mu.RUnlock()
+
+			// Sort points by distance
+			sort.Slice(availablePoints, func(i, j int) bool {
+				return availablePoints[i].Distance < availablePoints[j].Distance
+			})
 
 			// Send available points back to the car
 			response := Message{
