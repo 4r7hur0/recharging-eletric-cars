@@ -3,318 +3,202 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net"
-	"sort"
 	"sync"
 )
 
-type NotificacaoBateria struct {
-	Type         string  `json:"tipo"`
+// Message types for different components
+type Message struct {
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
+// ChargingPoint represents a charging point in the system
+type ChargingPoint struct {
+	ID        string  `json:"id"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Available bool    `json:"available"`
+	Queue     int     `json:"queue_size"`
+}
+
+// Car represents a car in the system
+type Car struct {
+	ID string `json:"id"`
+}
+
+// BatteryNotification represents a battery status update from a car
+type BatteryNotification struct {
+	Tipo         string  `json:"tipo"`
 	IDVeiculo    string  `json:"id_veiculo"`
 	NivelBateria float64 `json:"nivel_bateria"`
-	Localizacao  Coods   `json:"localizacao"`
+	Localizacao  Coords  `json:"localizacao"`
 	Timestamp    string  `json:"timestamp"`
 }
 
-type Coods struct {
+// Coords represents geographical coordinates
+type Coords struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
 }
 
-type ChargingStation struct {
-	StationID  string `json:"station_id"`
-	Location   Coods  `json:"location"`
-	Availiable bool   `json:"availiable"`
-	Queue      int    `json:"queue"`
+var (
+	chargingPoints = make(map[string]*ChargingPoint)
+	cars           = make(map[string]*Car)
+	mu             sync.RWMutex
+)
+
+// calculateDistance calculates the distance between two points using the Haversine formula
+func calculateDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	// TODO: Implement Haversine formula for accurate distance calculation
+	// For now, returning a simple Manhattan distance
+	return abs(lat1-lat2) + abs(lon1-lon2)
 }
 
-type reservation struct {
-	Type          string `json:"tipo"`
-	CarID         string `json:"id_veiculo"`
-	StationID     string `json:"id_ponto_recarga"`
-	EstimatedTime int    `json:"tempo_estimado"`
-	TimeStamp     string `json:"timestamp"`
+func abs(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
-type BaseMassage struct {
-	Type string `json:"tipo"`
+func handleCarConnection(conn net.Conn) {
+	defer conn.Close()
+
+	buffer := make([]byte, 1024)
+	for {
+		n, err := conn.Read(buffer)
+		if err != nil {
+			fmt.Println("Error reading from car:", err)
+			return
+		}
+
+		var msg Message
+		if err := json.Unmarshal(buffer[:n], &msg); err != nil {
+			fmt.Println("Error unmarshaling car message:", err)
+			continue
+		}
+		// Handle different message types from cars
+		switch msg.Type {
+		case "bateria":
+			var batteryMsg BatteryNotification
+			if err := json.Unmarshal(msg.Data, &batteryMsg); err != nil {
+				fmt.Println("Error unmarshaling battery message:", err)
+				continue
+			}
+
+			// Update car information
+			mu.Lock()
+			cars[batteryMsg.IDVeiculo] = &Car{ID: batteryMsg.IDVeiculo}
+			mu.Unlock()
+
+			// Find all available charging points
+			var availablePoints []ChargingPoint
+			mu.RLock()
+			for _, cp := range chargingPoints {
+				if cp.Available {
+					availablePoints = append(availablePoints, *cp)
+				}
+			}
+			mu.RUnlock()
+
+			// Send available points back to the car
+			response := Message{
+				Type: "pontos_disponiveis",
+				Data: json.RawMessage(fmt.Sprintf(`{"pontos": %s}`, must(json.Marshal(availablePoints)))),
+			}
+			responseData, _ := json.Marshal(response)
+			conn.Write(responseData)
+
+		case "reserva":
+			// Handle reservation request
+			// TODO: Implement reservation handling
+		case "confirmacao":
+			// Handle arrival confirmation
+			// TODO: Implement arrival confirmation handling
+		case "encerramento":
+			// Handle session end
+			// TODO: Implement session end handling
+		}
+	}
 }
 
-var chargingPointsConnections = make(map[string]net.Conn)
-var chargingPoints = make(map[string]*ChargingStation)
-var mu sync.Mutex
+func handleChargingPointConnection(conn net.Conn) {
+	defer conn.Close()
+
+	buffer := make([]byte, 1024)
+	for {
+		n, err := conn.Read(buffer)
+		if err != nil {
+			fmt.Println("Error reading from charging point:", err)
+			return
+		}
+
+		var cp ChargingPoint
+		if err := json.Unmarshal(buffer[:n], &cp); err != nil {
+			fmt.Println("Error unmarshaling charging point data:", err)
+			continue
+		}
+
+		// Update charging point status
+		mu.Lock()
+		chargingPoints[cp.ID] = &cp
+		mu.Unlock()
+
+		// Send acknowledgment back to charging point
+		response := "Status update received\n"
+		conn.Write([]byte(response))
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
 
 func main() {
-
-	go startTCPServer()
-
-	go reciveStationStatus()
-
-	go startChargingPointTCPServer()
-
-	select {} // Mantém o servidor rodando
-}
-
-func startChargingPointTCPServer() {
-	// Start the TCP server to recharging point
-	ln, err := net.Listen("tcp", ":8083")
+	// Listen for car connections on port 8081
+	carListener, err := net.Listen("tcp", ":8081")
 	if err != nil {
-		fmt.Println("Error starting server", err)
+		fmt.Println("Error starting car listener:", err)
 		return
 	}
-	defer ln.Close()
+	defer carListener.Close()
 
-	fmt.Println("Server for charging point started on port 8083")
+	// Listen for charging point connections on port 8080
+	cpListener, err := net.Listen("tcp", ":8080")
+	if err != nil {
+		fmt.Println("Error starting charging point listener:", err)
+		return
+	}
+	defer cpListener.Close()
 
+	fmt.Println("Server started - Listening for connections...")
+	fmt.Println("Cars on port 8081, Charging Points on port 8080")
+
+	// Handle car connections
+	go func() {
+		for {
+			conn, err := carListener.Accept()
+			if err != nil {
+				fmt.Println("Error accepting car connection:", err)
+				continue
+			}
+			fmt.Println("New car connected")
+			go handleCarConnection(conn)
+		}
+	}()
+
+	// Handle charging point connections
 	for {
-		conn, err := ln.Accept()
+		conn, err := cpListener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection", err)
+			fmt.Println("Error accepting charging point connection:", err)
 			continue
 		}
-		go handleChargingPoint(conn)
-	}
-}
-
-func handleChargingPoint(conn net.Conn) {
-	defer conn.Close()
-
-	buffer := make([]byte, 1024)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		fmt.Println("Error reading", err)
-		return
-	}
-
-	var point ChargingStation
-	err = json.Unmarshal(buffer[:n], &point)
-	if err != nil {
-		fmt.Println("Error unmarshalling", err)
-		conn.Write([]byte("Error processing request"))
-		return
-	}
-
-	mu.Lock()
-	chargingPointsConnections[point.StationID] = conn
-	fmt.Printf("%v", chargingPointsConnections)
-	mu.Unlock()
-
-	fmt.Printf("Updated station %v", point.StationID)
-
-	for {
-		_, err := conn.Read(buffer)
-		if err != nil {
-			fmt.Printf("charging point %v disconnected", point.StationID)
-			mu.Lock()
-			delete(chargingPoints, point.StationID)
-			delete(chargingPointsConnections, point.StationID)
-			mu.Unlock()
-			return
-		}
-
-	}
-}
-
-func startTCPServer() {
-	// Start the TCP server
-	ln, err := net.Listen("tcp", ":8081")
-	if err != nil {
-		fmt.Println("Error starting server", err)
-		return
-	}
-	defer ln.Close()
-
-	fmt.Println("Server started on port 8081")
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			fmt.Println("Error accepting connection", err)
-			continue
-		}
-		go handleVeicle(conn)
-	}
-}
-
-func handleVeicle(conn net.Conn) {
-	defer conn.Close()
-
-	buffer := make([]byte, 1024)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		fmt.Println("Error reading", err)
-		return
-	}
-
-	var base BaseMassage
-	err = json.Unmarshal(buffer[:n], &base)
-	if err != nil {
-		fmt.Println("Error unmarshalling", err)
-		return
-	}
-
-	fmt.Printf("Received message %v\n\n\n", base)
-
-	switch base.Type {
-	case "bateria":
-		var notificacao NotificacaoBateria
-		err = json.Unmarshal(buffer[:n], &notificacao)
-		if err != nil {
-			fmt.Println("Error unmarshalling NotificacaoBateria", err)
-			conn.Write([]byte("Error processing battery notification"))
-			return
-		}
-		fmt.Printf("Battery notification received: %+v\n", notificacao)
-		sendAvailableStations(conn, notificacao.Localizacao)
-
-	case "reserva":
-		var vata reservation
-		err = json.Unmarshal(buffer[:n], &vata)
-		if err != nil {
-			fmt.Println("Error unmarshalling NotificacaoBateria", err)
-			conn.Write([]byte("Error processing battery notification"))
-			return
-		}
-		processReservation(conn, vata)
-	default:
-		conn.Write([]byte("Invalid request"))
-	}
-}
-
-func sendAvailableStations(conn net.Conn, carLocation Coods) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	type StationWithDistance struct {
-		Station  ChargingStation
-		Distance float64
-	}
-
-	var stationWithDistance []StationWithDistance
-	for _, station := range chargingPoints {
-		if station.Availiable {
-			distance := calculateDistance(carLocation.Latitude, carLocation.Longitude, station.Location.Latitude, station.Location.Longitude)
-			stationWithDistance = append(stationWithDistance, StationWithDistance{Station: *station, Distance: distance})
-		}
-	}
-
-	// ordena as estações por distância
-	sort.Slice(stationWithDistance, func(i, j int) bool {
-		return stationWithDistance[i].Distance < stationWithDistance[j].Distance
-	})
-
-	var sortedStations []ChargingStation
-	for _, ststationWithDistance := range stationWithDistance {
-		sortedStations = append(sortedStations, ststationWithDistance.Station)
-	}
-
-	data, err := json.Marshal(sortedStations)
-	if err != nil {
-		fmt.Println("Error marshalling stations", err)
-		conn.Write([]byte("Error processing request"))
-		return
-	}
-
-	_, err = conn.Write(data)
-	if err != nil {
-		fmt.Println("Error sending stations", err)
-	}
-}
-
-func calculateDistance(lat1, lon1, lat2, lon2 float64) float64 {
-	const R = 6371 // raio da terra em km
-	lat1Rad := lat1 * (math.Pi / 180)
-	lon1Rad := lon1 * (math.Pi / 180)
-	lat2Rad := lat2 * (math.Pi / 180)
-	lon2Rad := lon2 * (math.Pi / 180)
-
-	dlat := lat2Rad - lat1Rad
-	dlon := lon2Rad - lon1Rad
-
-	a := math.Sin(dlat/2)*math.Sin(dlat/2) + math.Cos(lat1Rad)*math.Cos(lat2Rad)*math.Sin(dlon/2)*math.Sin(dlon/2)
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
-
-	return R * c // distância em km
-}
-
-func processReservation(conn net.Conn, res reservation) {
-	mu.Lock()
-
-	fmt.Printf("%v\n\n\n\n\n", res.StationID)
-
-	exist := chargingPoints[res.StationID]
-	if exist == nil {
-		conn.Write([]byte("Invalid station"))
-		mu.Unlock()
-		return
-	}
-
-	mu.Unlock()
-
-	fmt.Printf("Reserving point %v for car %v\n", res.StationID, res.CarID)
-	sendReservationToStation(res)
-	conn.Write([]byte("Reservation done"))
-}
-
-func sendReservationToStation(res reservation) {
-	mu.Lock()
-	conn, ok := chargingPointsConnections[res.StationID]
-	mu.Unlock()
-	if !ok {
-		fmt.Printf("Station %v not found\n", res.StationID)
-		return
-	}
-
-	data, err := json.Marshal(res)
-	if err != nil {
-		fmt.Println("Error marshalling reservation", err)
-		return
-	}
-
-	_, err = conn.Write(data)
-	if err != nil {
-		fmt.Println("Error sending reservation", err)
-		return
-	}
-
-	buffer := make([]byte, 1024)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		fmt.Println("Error reading", err)
-		return
-	}
-
-	fmt.Printf("Station response: %v", string(buffer[:n]))
-}
-
-func reciveStationStatus() {
-	addr, _ := net.ResolveUDPAddr("udp", ":9090")
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		fmt.Println("Error resolving address", err)
-		return
-	}
-	defer conn.Close()
-
-	buffer := make([]byte, 1024)
-	for {
-		n, _, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			fmt.Println("Error reading", err)
-			continue
-		}
-
-		var point ChargingStation
-		err = json.Unmarshal(buffer[:n], &point)
-		if err != nil {
-			fmt.Println("Error unmarshalling", err)
-			continue
-		}
-
-		mu.Lock()
-		chargingPoints[point.StationID] = &point
-		mu.Unlock()
-		fmt.Printf("Station %v is %v\n", point.StationID, point.Availiable)
+		fmt.Println("New charging point connected")
+		go handleChargingPointConnection(conn)
 	}
 }
