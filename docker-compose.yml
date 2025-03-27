@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  cloud:
+    build: 
+      context: ./cloud
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    networks:
+      - car-network
+
+  car:
+    build: 
+      context: ./car
+      dockerfile: Dockerfile
+    depends_on:
+      - cloud
+    networks:
+      - car-network
+    stdin_open: true
+    tty: true
+    environment:
+      - TERM=xterm-256color
+
+networks:
+  car-network:
+    driver: bridge

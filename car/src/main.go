@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -79,6 +82,7 @@ func (e *EncerramentoSessao) ToJSON() ([]byte, error) {
 }
 
 func main() {
+	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Println("\n--- Menu ---")
 		fmt.Println("1. Enviar notificação de bateria")
@@ -89,52 +93,83 @@ func main() {
 		fmt.Println("6. Sair")
 		fmt.Print("Selecione uma opção: ")
 
-		var opcao int
-		_, err := fmt.Scanln(&opcao)
-		if err != nil {
-			fmt.Println("Erro na entrada:", err)
-			continue
-		}
+		if scanner.Scan() {
+			opcao, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
+			if err != nil {
+				fmt.Println("Erro na entrada:", err)
+				continue
+			}
 
-		switch opcao {
-		case 1:
-			enviarNotificacaoBateria()
-		case 2:
-			consultarPontos()
-		case 3:
-			solicitarReserva()
-		case 4:
-			confirmarChegada()
-		case 5:
-			encerrarSessao()
-		case 6:
-			fmt.Println("Saindo...")
-			os.Exit(0)
-		default:
-			fmt.Println("Opção inválida, tente novamente.")
+			switch opcao {
+			case 1:
+				enviarNotificacaoBateria(scanner)
+			case 2:
+				consultarPontos(scanner)
+			case 3:
+				solicitarReserva(scanner)
+			case 4:
+				confirmarChegada(scanner)
+			case 5:
+				encerrarSessao(scanner)
+			case 6:
+				fmt.Println("Saindo...")
+				os.Exit(0)
+			default:
+				fmt.Println("Opção inválida, tente novamente.")
+			}
 		}
 	}
 }
 
+// Função para ler string do scanner
+func lerString(scanner *bufio.Scanner) string {
+	if scanner.Scan() {
+		return strings.TrimSpace(scanner.Text())
+	}
+	return ""
+}
+
+// Função para ler float64 do scanner
+func lerFloat64(scanner *bufio.Scanner) float64 {
+	if scanner.Scan() {
+		valor, err := strconv.ParseFloat(strings.TrimSpace(scanner.Text()), 64)
+		if err != nil {
+			fmt.Println("Erro ao ler número:", err)
+			return 0
+		}
+		return valor
+	}
+	return 0
+}
+
+// Função para ler int do scanner
+func lerInt(scanner *bufio.Scanner) int {
+	if scanner.Scan() {
+		valor, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
+		if err != nil {
+			fmt.Println("Erro ao ler número:", err)
+			return 0
+		}
+		return valor
+	}
+	return 0
+}
+
 // Função para enviar notificação de bateria
-func enviarNotificacaoBateria() {
+func enviarNotificacaoBateria(scanner *bufio.Scanner) {
 	fmt.Println("\n--- Notificação de Bateria ---")
 
 	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
+	idVeiculo := lerString(scanner)
 
 	fmt.Print("Digite a latitude: ")
-	var latitude float64
-	fmt.Scanln(&latitude)
+	latitude := lerFloat64(scanner)
 
 	fmt.Print("Digite a longitude: ")
-	var longitude float64
-	fmt.Scanln(&longitude)
+	longitude := lerFloat64(scanner)
 
 	fmt.Print("Digite o nível atual da bateria (%): ")
-	var nivelBateria float64
-	fmt.Scanln(&nivelBateria)
+	nivelBateria := lerFloat64(scanner)
 
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
@@ -152,24 +187,20 @@ func enviarNotificacaoBateria() {
 }
 
 // Função para consultar pontos de recarga
-func consultarPontos() {
+func consultarPontos(scanner *bufio.Scanner) {
 	fmt.Println("\n--- Consulta de Pontos de Recarga ---")
 
 	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
+	idVeiculo := lerString(scanner)
 
 	fmt.Print("Digite a latitude do veículo: ")
-	var latitude float64
-	fmt.Scanln(&latitude)
+	latitude := lerFloat64(scanner)
 
 	fmt.Print("Digite a longitude do veículo: ")
-	var longitude float64
-	fmt.Scanln(&longitude)
+	longitude := lerFloat64(scanner)
 
 	fmt.Print("Digite a distância máxima aceitável (em km, opcional - digite 0 para ignorar): ")
-	var distancia float64
-	fmt.Scanln(&distancia)
+	distancia := lerFloat64(scanner)
 
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
@@ -186,20 +217,17 @@ func consultarPontos() {
 }
 
 // Função para solicitar reserva de ponto
-func solicitarReserva() {
+func solicitarReserva(scanner *bufio.Scanner) {
 	fmt.Println("\n--- Solicitação de Reserva de Ponto ---")
 
 	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
+	idVeiculo := lerString(scanner)
 
 	fmt.Print("Digite o ID do ponto de recarga: ")
-	var idPontoRecarga string
-	fmt.Scanln(&idPontoRecarga)
+	idPontoRecarga := lerString(scanner)
 
 	fmt.Print("Digite o tempo estimado de chegada (em minutos): ")
-	var tempoEstimado int
-	fmt.Scanln(&tempoEstimado)
+	tempoEstimado := lerInt(scanner)
 
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
@@ -214,16 +242,14 @@ func solicitarReserva() {
 }
 
 // Função para confirmar chegada ao ponto
-func confirmarChegada() {
+func confirmarChegada(scanner *bufio.Scanner) {
 	fmt.Println("\n--- Confirmação de Chegada ---")
 
 	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
+	idVeiculo := lerString(scanner)
 
 	fmt.Print("Digite o ID do ponto de recarga: ")
-	var idPontoRecarga string
-	fmt.Scanln(&idPontoRecarga)
+	idPontoRecarga := lerString(scanner)
 
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
@@ -237,20 +263,17 @@ func confirmarChegada() {
 }
 
 // Função para encerrar sessão de carregamento
-func encerrarSessao() {
+func encerrarSessao(scanner *bufio.Scanner) {
 	fmt.Println("\n--- Encerramento de Sessão de Carregamento ---")
 
 	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
+	idVeiculo := lerString(scanner)
 
 	fmt.Print("Digite o ID do ponto de recarga: ")
-	var idPontoRecarga string
-	fmt.Scanln(&idPontoRecarga)
+	idPontoRecarga := lerString(scanner)
 
 	fmt.Print("Digite a energia consumida (kWh): ")
-	var energiaConsumida float64
-	fmt.Scanln(&energiaConsumida)
+	energiaConsumida := lerFloat64(scanner)
 
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
@@ -266,7 +289,7 @@ func encerrarSessao() {
 
 // Função genérica para enviar uma mensagem (notificação ou consulta) via TCP
 func enviarMensagem(msg Mensagem) {
-	conn, err := net.Dial("tcp", "localhost:8081")
+	conn, err := net.Dial("tcp", "cloud:8081")
 	if err != nil {
 		fmt.Println("Erro ao conectar:", err)
 		return
