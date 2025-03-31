@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  cloud:
+    build: 
+      context: ./cloud
+      dockerfile: Dockerfile
+    container_name: cloud-server
+    ports:
+      - "8081:8081"
+    networks:
+      - car-network
+
+  car1:
+    build: 
+      context: ./car
+      dockerfile: Dockerfile
+    container_name: car1
+    depends_on:
+      - cloud
+    networks:
+      - car-network
+    stdin_open: true
+    tty: true
+
+  car2:
+    build: 
+      context: ./car
+      dockerfile: Dockerfile
+    container_name: car2
+    depends_on:
+      - cloud
+    networks:
+      - car-network
+    stdin_open: true
+    tty: true
+
+  car3:
+    build: 
+      context: ./car
+      dockerfile: Dockerfile
+    container_name: car3
+    depends_on:
+      - cloud
+    networks:
+      - car-network
+    stdin_open: true
+    tty: true
+
+networks:
+  car-network:
+    name: car-network
+    driver: bridge
