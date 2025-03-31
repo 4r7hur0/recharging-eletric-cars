@@ -18,7 +18,6 @@ type Message struct {
 type NotificacaoBateria struct {
 	IDVeiculo    string  `json:"id_veiculo"`
 	NivelBateria float64 `json:"nivel_bateria"`
-	NivelCarregar float64 `json:"nivel_carregar"`
 	Localizacao  Coords  `json:"localizacao"`
 	Timestamp    string  `json:"timestamp"`
 }
@@ -49,6 +48,8 @@ type ReservaPonto struct {
 type ConfirmacaoChegada struct {
 	IDVeiculo      string `json:"id_veiculo"`
 	IDPontoRecarga string `json:"id_ponto_recarga"`
+	NivelBateria   float64 `json:"nivel_bateria"`
+	NivelCarregamento  float64 `json:"nivel_carregar"`
 	Timestamp      string `json:"timestamp"`
 }
 
@@ -127,7 +128,6 @@ func enviarNotificacaoBateria() {
 	notif := &NotificacaoBateria{
 		IDVeiculo:    idVeiculo,
 		NivelBateria: nivelBateria,
-		NivelCarregar: nivelCarregar,
 		Localizacao: Coords{
 			Latitude:  latitude,
 			Longitude: longitude,
@@ -245,11 +245,21 @@ func confirmarChegada() {
 	var idPontoRecarga string
 	fmt.Scanln(&idPontoRecarga)
 
+	fmt.Print("Digite o nível atual da bateria (%): ")
+	var nivelBateria float64
+	fmt.Scanln(&nivelBateria)
+
+	fmt.Print("Digite até que nível deseja carregar a bateria (%):")
+	var nivelCarregamento float64
+	fmt.Scanln(&nivelCarregamento)
+
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	confirmacao := &ConfirmacaoChegada{
 		IDVeiculo:      idVeiculo,
 		IDPontoRecarga: idPontoRecarga,
+		NivelBateria:   nivelBateria,
+		NivelCarregamento: nivelCarregamento,
 		Timestamp:      timestamp,
 	}
 
