@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -61,7 +62,25 @@ type EncerramentoSessao struct {
 	Timestamp        string  `json:"timestamp"`
 }
 
+/**
+* Estrutura para armazenar a conexão global
+* e um mutex para garantir acesso seguro à conexão.
+*/
+var (
+    globalConn net.Conn
+    globalConnMutex sync.Mutex
+)
+
+
 func main() {
+
+	// Inicializar a conexão com o servidor
+  err := inicializarConexao()
+    if err != nil {
+        fmt.Println("Erro ao conectar com o servidor:", err)
+        os.Exit(1)
+    }
+    defer globalConn.Close()
 	for {
 		fmt.Println("\n--- Menu ---")
 		fmt.Println("1. Enviar notificação de bateria")
@@ -98,6 +117,69 @@ func main() {
 		}
 	}
 }
+
+// Função para inicializar a conexão TCP persistente
+func inicializarConexao() error {
+	var err error
+	globalConn, err = net.Dial("tcp", "cloud-server:8081")
+	if err != nil {
+			return err
+	}
+	
+	// Iniciar goroutine para lidar com respostas assíncronas do servidor
+	go receberRespostas()
+	
+	fmt.Println("Conexão estabelecida com o servidor.")
+	return nil
+}
+
+// Função para receber respostas assíncronas do servidor
+func receberRespostas() {
+	buffer := make([]byte, 4096)
+	for {
+			n, err := globalConn.Read(buffer)
+			if err != nil {
+					fmt.Println("Conexão com o servidor perdida:", err)
+					// Tentar reconectar
+					tentarReconectar()
+					return
+			}
+			
+			if n > 0 {
+					fmt.Println("Resposta do servidor:", string(buffer[:n]))
+			}
+	}
+}
+
+// Função para tentar reconectar em caso de perda de conexão
+func tentarReconectar() {
+	globalConnMutex.Lock()
+	defer globalConnMutex.Unlock()
+	
+	maxTentativas := 5
+	for i := 0; i < maxTentativas; i++ {
+			fmt.Printf("Tentando reconectar (%d/%d)...\n", i+1, maxTentativas)
+			
+			var err error
+			globalConn, err = net.Dial("tcp", "cloud-server:8081")
+			if err == nil {
+					fmt.Println("Reconectado com sucesso!")
+					go receberRespostas() // Reiniciar a goroutine de recepção
+					return
+			}
+			
+			// Esperar antes de tentar novamente com backoff exponencial
+			tempo := time.Duration(1<<uint(i)) * time.Second
+			if tempo > 30*time.Second {
+					tempo = 30 * time.Second
+			}
+			time.Sleep(tempo)
+	}
+	
+	fmt.Println("Não foi possível reconectar após várias tentativas. Reinicie o aplicativo.")
+	os.Exit(1)
+}
+
 
 // Função para enviar notificação de bateria
 func enviarNotificacaoBateria() {
@@ -318,31 +400,28 @@ func encerrarSessao() {
 
 // Função genérica para enviar uma mensagem via TCP
 func enviarMensagem(msg *Message) {
-	conn, err := net.Dial("tcp", "cloud-server:8081")
-	if err != nil {
-		fmt.Println("Erro ao conectar:", err)
-		return
+	globalConnMutex.Lock()
+	defer globalConnMutex.Unlock()
+	
+	if globalConn == nil {
+			fmt.Println("Erro: não há conexão ativa com o servidor")
+			return
 	}
-	defer conn.Close()
-
+	
 	jsonData, err := json.Marshal(msg)
 	if err != nil {
-		fmt.Println("Erro ao gerar JSON:", err)
-		return
+			fmt.Println("Erro ao gerar JSON:", err)
+			return
 	}
-
-	_, err = conn.Write(jsonData)
+	
+	_, err = globalConn.Write(jsonData)
 	if err != nil {
-		fmt.Println("Erro ao enviar dados:", err)
-		return
+			fmt.Println("Erro ao enviar dados:", err)
+			// A reconexão será tratada pela goroutine de recebimento
+			return
 	}
-
-	buffer := make([]byte, 1024)
-	n, err := conn.Read(buffer)
-	if err != nil {
-		fmt.Println("Erro ao receber resposta:", err)
-		return
-	}
-
-	fmt.Println("Resposta recebida:", string(buffer[:n]))
+	
+	fmt.Println("Mensagem enviada com sucesso")
+	// Note que não esperamos pela resposta aqui, pois ela será recebida
+	// pela goroutine receberRespostas() de forma assíncrona
 }
