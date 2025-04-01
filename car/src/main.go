@@ -69,6 +69,7 @@ type EncerramentoSessao struct {
 var (
     globalConn net.Conn
     globalConnMutex sync.Mutex
+		IDVeiculo string
 )
 
 
@@ -125,6 +126,17 @@ func inicializarConexao() error {
 	if err != nil {
 			return err
 	}
+	
+	// Obter o endereço local da conexão para extrair a porta
+	localAddr := globalConn.LocalAddr().String()
+	_, portStr, err := net.SplitHostPort(localAddr)
+	if err != nil {
+			return fmt.Errorf("erro ao extrair porta: %v", err)
+	}
+	
+	// Gerar ID do carro baseado na porta local
+	IDVeiculo = fmt.Sprintf("CAR%s", portStr)
+	fmt.Printf("Identificação do veículo: %s\n", IDVeiculo)
 	
 	// Iniciar goroutine para lidar com respostas assíncronas do servidor
 	go receberRespostas()
@@ -185,10 +197,6 @@ func tentarReconectar() {
 func enviarNotificacaoBateria() {
 	fmt.Println("\n--- Notificação de Bateria ---")
 
-	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
-
 	fmt.Print("Digite a latitude: ")
 	var latitude float64
 	fmt.Scanln(&latitude)
@@ -208,7 +216,7 @@ func enviarNotificacaoBateria() {
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	notif := &NotificacaoBateria{
-		IDVeiculo:    idVeiculo,
+		IDVeiculo:    IDVeiculo,
 		NivelBateria: nivelBateria,
 		Localizacao: Coords{
 			Latitude:  latitude,
@@ -235,10 +243,6 @@ func enviarNotificacaoBateria() {
 func consultarPontos() {
 	fmt.Println("\n--- Consulta de Pontos de Recarga ---")
 
-	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
-
 	fmt.Print("Digite a latitude do veículo: ")
 	var latitude float64
 	fmt.Scanln(&latitude)
@@ -254,7 +258,7 @@ func consultarPontos() {
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	consulta := &ConsultaPontos{
-		IDVeiculo:   idVeiculo,
+		IDVeiculo:   IDVeiculo,
 		Localizacao: &Coords{Latitude: latitude, Longitude: longitude},
 		Timestamp:   timestamp,
 	}
@@ -280,10 +284,6 @@ func consultarPontos() {
 func solicitarReserva() {
 	fmt.Println("\n--- Solicitação de Reserva de Ponto ---")
 
-	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
-
 	fmt.Print("Digite o ID do ponto de recarga: ")
 	var idPontoRecarga string
 	fmt.Scanln(&idPontoRecarga)
@@ -295,7 +295,7 @@ func solicitarReserva() {
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	reserva := &ReservaPonto{
-		IDVeiculo:      idVeiculo,
+		IDVeiculo:      IDVeiculo,
 		IDPontoRecarga: idPontoRecarga,
 		TempoEstimado:  tempoEstimado,
 		Timestamp:      timestamp,
@@ -319,10 +319,6 @@ func solicitarReserva() {
 func confirmarChegada() {
 	fmt.Println("\n--- Confirmação de Chegada ---")
 
-	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
-
 	fmt.Print("Digite o ID do ponto de recarga: ")
 	var idPontoRecarga string
 	fmt.Scanln(&idPontoRecarga)
@@ -338,7 +334,7 @@ func confirmarChegada() {
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	confirmacao := &ConfirmacaoChegada{
-		IDVeiculo:      idVeiculo,
+		IDVeiculo:      IDVeiculo,
 		IDPontoRecarga: idPontoRecarga,
 		NivelBateria:   nivelBateria,
 		NivelCarregamento: nivelCarregamento,
@@ -363,10 +359,6 @@ func confirmarChegada() {
 func encerrarSessao() {
 	fmt.Println("\n--- Encerramento de Sessão de Carregamento ---")
 
-	fmt.Print("Digite o ID do veículo: ")
-	var idVeiculo string
-	fmt.Scanln(&idVeiculo)
-
 	fmt.Print("Digite o ID do ponto de recarga: ")
 	var idPontoRecarga string
 	fmt.Scanln(&idPontoRecarga)
@@ -378,7 +370,7 @@ func encerrarSessao() {
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	encerramento := &EncerramentoSessao{
-		IDVeiculo:        idVeiculo,
+		IDVeiculo:        IDVeiculo,
 		IDPontoRecarga:   idPontoRecarga,
 		EnergiaConsumida: energiaConsumida,
 		Timestamp:        timestamp,
