@@ -1,31 +1,26 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
 	"os"
-	"strconv"
-	"strings"
+	"sync"
 	"time"
 )
 
-// Interface para converter a mensagem em JSON
-type Mensagem interface {
-	ToJSON() ([]byte, error)
+// Estrutura para mensagem genérica
+type Message struct {
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
 }
 
 // Estrutura para notificação de bateria
 type NotificacaoBateria struct {
 	IDVeiculo    string  `json:"id_veiculo"`
 	NivelBateria float64 `json:"nivel_bateria"`
-	Localizacao  *Coords `json:"localizacao"`
+	Localizacao  Coords  `json:"localizacao"`
 	Timestamp    string  `json:"timestamp"`
-}
-
-func (m *NotificacaoBateria) ToJSON() ([]byte, error) {
-	return json.Marshal(m)
 }
 
 // Estrutura para consulta de pontos de recarga
@@ -34,10 +29,6 @@ type ConsultaPontos struct {
 	Localizacao  *Coords `json:"localizacao"`
 	DistanciaMax float64 `json:"distancia_max,omitempty"` // campo opcional
 	Timestamp    string  `json:"timestamp"`
-}
-
-func (c *ConsultaPontos) ToJSON() ([]byte, error) {
-	return json.Marshal(c)
 }
 
 // Estrutura para representar coordenadas
@@ -54,19 +45,13 @@ type ReservaPonto struct {
 	Timestamp      string `json:"timestamp"`
 }
 
-func (r *ReservaPonto) ToJSON() ([]byte, error) {
-	return json.Marshal(r)
-}
-
 // Estrutura para confirmação de chegada
 type ConfirmacaoChegada struct {
 	IDVeiculo      string `json:"id_veiculo"`
 	IDPontoRecarga string `json:"id_ponto_recarga"`
+	NivelBateria   float64 `json:"nivel_bateria"`
+	NivelCarregamento  float64 `json:"nivel_carregar"`
 	Timestamp      string `json:"timestamp"`
-}
-
-func (c *ConfirmacaoChegada) ToJSON() ([]byte, error) {
-	return json.Marshal(c)
 }
 
 // Estrutura para encerramento de sessão
@@ -77,12 +62,48 @@ type EncerramentoSessao struct {
 	Timestamp        string  `json:"timestamp"`
 }
 
-func (e *EncerramentoSessao) ToJSON() ([]byte, error) {
-	return json.Marshal(e)
+type PontoRecarga struct {
+	ID         string  `json:"id"`
+	Latitude   float64 `json:"latitude"`
+	Longitude  float64 `json:"longitude"`
+	Available  bool    `json:"available"`
+	QueueSize  int     `json:"queue_size"`
+	Distance   float64 `json:"distance"`
 }
 
+type RespostaPontosDisponiveis struct {
+	Pontos []PontoRecarga `json:"pontos"`
+}
+
+type RespostaServidor struct {
+	Type string          `json:"type"`
+	Data json.RawMessage `json:"data"`
+}
+
+
+/**
+* Estrutura para armazenar a conexão global
+* e um mutex para garantir acesso seguro à conexão.
+*/
+var (
+    globalConn net.Conn
+    globalConnMutex sync.Mutex
+	IDVeiculo string
+	pontosDisponiveis []PontoRecarga
+	pontosMutex       sync.Mutex
+
+)
+
+
 func main() {
-	scanner := bufio.NewScanner(os.Stdin)
+
+	// Inicializar a conexão com o servidor
+  err := inicializarConexao()
+    if err != nil {
+        fmt.Println("Erro ao conectar com o servidor:", err)
+        os.Exit(1)
+    }
+    defer globalConn.Close()
 	for {
 		fmt.Println("\n--- Menu ---")
 		fmt.Println("1. Enviar notificação de bateria")
@@ -93,227 +114,442 @@ func main() {
 		fmt.Println("6. Sair")
 		fmt.Print("Selecione uma opção: ")
 
-		if scanner.Scan() {
-			opcao, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
-			if err != nil {
-				fmt.Println("Erro na entrada:", err)
-				continue
-			}
-
-			switch opcao {
-			case 1:
-				enviarNotificacaoBateria(scanner)
-			case 2:
-				consultarPontos(scanner)
-			case 3:
-				solicitarReserva(scanner)
-			case 4:
-				confirmarChegada(scanner)
-			case 5:
-				encerrarSessao(scanner)
-			case 6:
-				fmt.Println("Saindo...")
-				os.Exit(0)
-			default:
-				fmt.Println("Opção inválida, tente novamente.")
-			}
-		}
-	}
-}
-
-// Função para ler string do scanner
-func lerString(scanner *bufio.Scanner) string {
-	if scanner.Scan() {
-		return strings.TrimSpace(scanner.Text())
-	}
-	return ""
-}
-
-// Função para ler float64 do scanner
-func lerFloat64(scanner *bufio.Scanner) float64 {
-	if scanner.Scan() {
-		valor, err := strconv.ParseFloat(strings.TrimSpace(scanner.Text()), 64)
+		var opcao int
+		_, err := fmt.Scanln(&opcao)
 		if err != nil {
-			fmt.Println("Erro ao ler número:", err)
-			return 0
+			fmt.Println("Erro na entrada:", err)
+			continue
 		}
-		return valor
+
+		switch opcao {
+		case 1:
+			enviarNotificacaoBateria()
+		case 2:
+			consultarPontos()
+		case 3:
+			solicitarReserva()
+		case 4:
+			confirmarChegada()
+		case 5:
+			encerrarSessao()
+		case 6:
+			fmt.Println("Saindo...")
+			os.Exit(0)
+		default:
+			fmt.Println("Opção inválida, tente novamente.")
+		}
 	}
-	return 0
 }
 
-// Função para ler int do scanner
-func lerInt(scanner *bufio.Scanner) int {
-	if scanner.Scan() {
-		valor, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
-		if err != nil {
-			fmt.Println("Erro ao ler número:", err)
-			return 0
-		}
-		return valor
+// Função para inicializar a conexão TCP persistente
+func inicializarConexao() error {
+	var err error
+	globalConn, err = net.Dial("tcp", "localhost:8081")
+	if err != nil {
+			return err
 	}
-	return 0
+	
+	// Obter o endereço local da conexão para extrair a porta
+	localAddr := globalConn.LocalAddr().String()
+	_, portStr, err := net.SplitHostPort(localAddr)
+	if err != nil {
+			return fmt.Errorf("erro ao extrair porta: %v", err)
+	}
+	
+	// Gerar ID do carro baseado na porta local
+	IDVeiculo = fmt.Sprintf("CAR%s", portStr)
+	fmt.Printf("Identificação do veículo: %s\n", IDVeiculo)
+	
+	// Iniciar goroutine para lidar com respostas assíncronas do servidor
+	go receberRespostas()
+	
+	fmt.Println("Conexão estabelecida com o servidor.")
+	return nil
 }
+
+// Função para receber respostas assíncronas do servidor
+func receberRespostas() {
+	buffer := make([]byte, 4096)
+	for {
+		n, err := globalConn.Read(buffer)
+		if err != nil {
+			fmt.Println("Conexão com o servidor perdida:", err)
+			// Tentar reconectar
+			tentarReconectar()
+			return
+		}
+		
+		if n > 0 {
+			resposta := string(buffer[:n])
+			fmt.Println("\nResposta do servidor recebida.")
+			
+			// Processar a resposta
+			processarResposta(resposta)
+		}
+	}
+}
+
+func processarResposta(resposta string) {
+	var respostaObj RespostaServidor
+	err := json.Unmarshal([]byte(resposta), &respostaObj)
+	if err != nil {
+		fmt.Println("Erro ao decodificar resposta:", err)
+		fmt.Println("Resposta original:", resposta)
+		return
+	}
+	
+	switch respostaObj.Type {
+	case "pontos_disponiveis":
+		processarPontosDisponiveis(respostaObj.Data)
+	default:
+		fmt.Println("Resposta do servidor:", resposta)
+	}
+}
+
+func processarPontosDisponiveis(data json.RawMessage) {
+	var pontosResp RespostaPontosDisponiveis
+	err := json.Unmarshal(data, &pontosResp)
+	if err != nil {
+		fmt.Println("Erro ao decodificar pontos de recarga:", err)
+		return
+	}
+	
+	// Atualizar a lista global de pontos
+	pontosMutex.Lock()
+	pontosDisponiveis = pontosResp.Pontos
+	pontosMutex.Unlock()
+	
+	// Exibir os pontos de forma organizada
+	exibirPontosDisponiveis()
+}
+
+func exibirPontosDisponiveis() {
+	pontosMutex.Lock()
+	defer pontosMutex.Unlock()
+	
+	if len(pontosDisponiveis) == 0 {
+		fmt.Println("Nenhum ponto de recarga disponível!")
+		return
+	}
+	
+	fmt.Println("\n=== Pontos de Recarga Disponíveis ===")
+	fmt.Println("Selecione um ponto digitando o número correspondente:")
+	
+	for i, ponto := range pontosDisponiveis {
+		// Converter distância de metros para quilômetros e formatar para 2 casas decimais
+		distanciaKm := ponto.Distance / 1000
+		
+		fmt.Printf("%d. ID: %s | Distância: %.2f km | Disponível: %t | Fila: %d\n", 
+			i+1, ponto.ID, distanciaKm, ponto.Available, ponto.QueueSize)
+	}
+	
+	fmt.Print("\nDigite o número do ponto para reserva (ou 0 para voltar ao menu): ")
+	var escolha int
+	_, err := fmt.Scanln(&escolha)
+	if err != nil || escolha <= 0 || escolha > len(pontosDisponiveis) {
+		fmt.Println("Seleção inválida ou cancelada.")
+		return
+	}
+	
+	// Ponto selecionado
+	pontoSelecionado := pontosDisponiveis[escolha-1]
+	fmt.Printf("\nPonto selecionado: %s\n", pontoSelecionado.ID)
+	
+	// Perguntar se deseja fazer reserva
+	fmt.Print("Deseja fazer reserva deste ponto? (s/n): ")
+	var resposta string
+	fmt.Scanln(&resposta)
+	
+	if resposta == "s" || resposta == "S" {
+		solicitarReservaAutomatica(pontoSelecionado.ID)
+	}
+}
+
+func solicitarReservaAutomatica(idPontoRecarga string) {
+	fmt.Println("\n--- Solicitação de Reserva de Ponto ---")
+	fmt.Printf("ID do ponto de recarga: %s\n", idPontoRecarga)
+	
+	fmt.Print("Digite o tempo estimado de chegada (em minutos): ")
+	var tempoEstimado int
+	fmt.Scanln(&tempoEstimado)
+	
+	timestamp := time.Now().Format("2006-01-02T15:04:05")
+	
+	reserva := &ReservaPonto{
+		IDVeiculo:      IDVeiculo,
+		IDPontoRecarga: idPontoRecarga,
+		TempoEstimado:  tempoEstimado,
+		Timestamp:      timestamp,
+	}
+	
+	jsonData, err := json.Marshal(reserva)
+	if err != nil {
+		fmt.Println("Erro ao gerar JSON:", err)
+		return
+	}
+	
+	msg := &Message{
+		Type: "reserva",
+		Data: jsonData,
+	}
+	
+	enviarMensagem(msg)
+}
+
+
+
+// Função para tentar reconectar em caso de perda de conexão
+func tentarReconectar() {
+	globalConnMutex.Lock()
+	defer globalConnMutex.Unlock()
+	
+	maxTentativas := 5
+	for i := 0; i < maxTentativas; i++ {
+			fmt.Printf("Tentando reconectar (%d/%d)...\n", i+1, maxTentativas)
+			
+			var err error
+			globalConn, err = net.Dial("tcp", "localhost:8081")
+			if err == nil {
+					fmt.Println("Reconectado com sucesso!")
+					go receberRespostas() // Reiniciar a goroutine de recepção
+					return
+			}
+			
+			// Esperar antes de tentar novamente com backoff exponencial
+			tempo := time.Duration(1<<uint(i)) * time.Second
+			if tempo > 30*time.Second {
+					tempo = 30 * time.Second
+			}
+			time.Sleep(tempo)
+	}
+	
+	fmt.Println("Não foi possível reconectar após várias tentativas. Reinicie o aplicativo.")
+	os.Exit(1)
+}
+
 
 // Função para enviar notificação de bateria
-func enviarNotificacaoBateria(scanner *bufio.Scanner) {
+func enviarNotificacaoBateria() {
 	fmt.Println("\n--- Notificação de Bateria ---")
 
-	fmt.Print("Digite o ID do veículo: ")
-	idVeiculo := lerString(scanner)
-
 	fmt.Print("Digite a latitude: ")
-	latitude := lerFloat64(scanner)
+	var latitude float64
+	fmt.Scanln(&latitude)
 
 	fmt.Print("Digite a longitude: ")
-	longitude := lerFloat64(scanner)
+	var longitude float64
+	fmt.Scanln(&longitude)
 
 	fmt.Print("Digite o nível atual da bateria (%): ")
-	nivelBateria := lerFloat64(scanner)
+	var nivelBateria float64
+	fmt.Scanln(&nivelBateria)
+
+	fmt.Print("Digite até que nível deseja carregar a bateria (%):")
+	var nivelCarregar float64
+	fmt.Scanln(&nivelCarregar)
 
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
-	msg := &NotificacaoBateria{
-		IDVeiculo:    idVeiculo,
+	notif := &NotificacaoBateria{
+		IDVeiculo:    IDVeiculo,
 		NivelBateria: nivelBateria,
-		Localizacao: &Coords{
+		Localizacao: Coords{
 			Latitude:  latitude,
 			Longitude: longitude,
 		},
 		Timestamp: timestamp,
 	}
 
+	jsonData, err := json.Marshal(notif)
+	if err != nil {
+		fmt.Println("Erro ao gerar JSON:", err)
+		return
+	}
+
+	msg := &Message{
+		Type: "bateria",
+		Data: jsonData,
+	}
+
 	enviarMensagem(msg)
 }
 
 // Função para consultar pontos de recarga
-func consultarPontos(scanner *bufio.Scanner) {
+func consultarPontos() {
 	fmt.Println("\n--- Consulta de Pontos de Recarga ---")
-
-	fmt.Print("Digite o ID do veículo: ")
-	idVeiculo := lerString(scanner)
-
+	
 	fmt.Print("Digite a latitude do veículo: ")
-	latitude := lerFloat64(scanner)
-
+	var latitude float64
+	fmt.Scanln(&latitude)
+	
 	fmt.Print("Digite a longitude do veículo: ")
-	longitude := lerFloat64(scanner)
-
+	var longitude float64
+	fmt.Scanln(&longitude)
+	
 	fmt.Print("Digite a distância máxima aceitável (em km, opcional - digite 0 para ignorar): ")
-	distancia := lerFloat64(scanner)
-
+	var distancia float64
+	fmt.Scanln(&distancia)
+	
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
-
+	
 	consulta := &ConsultaPontos{
-		IDVeiculo:   idVeiculo,
+		IDVeiculo:   IDVeiculo,
 		Localizacao: &Coords{Latitude: latitude, Longitude: longitude},
 		Timestamp:   timestamp,
 	}
 	if distancia > 0 {
 		consulta.DistanciaMax = distancia
 	}
-
-	enviarMensagem(consulta)
+	
+	jsonData, err := json.Marshal(consulta)
+	if err != nil {
+		fmt.Println("Erro ao gerar JSON:", err)
+		return
+	}
+	
+	msg := &Message{
+		Type: "consulta",
+		Data: jsonData,
+	}
+	
+	fmt.Println("Enviando consulta de pontos... Aguarde a resposta do servidor.")
+	enviarMensagem(msg)
 }
 
 // Função para solicitar reserva de ponto
-func solicitarReserva(scanner *bufio.Scanner) {
+func solicitarReserva() {
 	fmt.Println("\n--- Solicitação de Reserva de Ponto ---")
 
-	fmt.Print("Digite o ID do veículo: ")
-	idVeiculo := lerString(scanner)
-
 	fmt.Print("Digite o ID do ponto de recarga: ")
-	idPontoRecarga := lerString(scanner)
+	var idPontoRecarga string
+	fmt.Scanln(&idPontoRecarga)
 
 	fmt.Print("Digite o tempo estimado de chegada (em minutos): ")
-	tempoEstimado := lerInt(scanner)
+	var tempoEstimado int
+	fmt.Scanln(&tempoEstimado)
 
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	reserva := &ReservaPonto{
-		IDVeiculo:      idVeiculo,
+		IDVeiculo:      IDVeiculo,
 		IDPontoRecarga: idPontoRecarga,
 		TempoEstimado:  tempoEstimado,
 		Timestamp:      timestamp,
 	}
 
-	enviarMensagem(reserva)
-}
-
-// Função para confirmar chegada ao ponto
-func confirmarChegada(scanner *bufio.Scanner) {
-	fmt.Println("\n--- Confirmação de Chegada ---")
-
-	fmt.Print("Digite o ID do veículo: ")
-	idVeiculo := lerString(scanner)
-
-	fmt.Print("Digite o ID do ponto de recarga: ")
-	idPontoRecarga := lerString(scanner)
-
-	timestamp := time.Now().Format("2006-01-02T15:04:05")
-
-	confirmacao := &ConfirmacaoChegada{
-		IDVeiculo:      idVeiculo,
-		IDPontoRecarga: idPontoRecarga,
-		Timestamp:      timestamp,
-	}
-
-	enviarMensagem(confirmacao)
-}
-
-// Função para encerrar sessão de carregamento
-func encerrarSessao(scanner *bufio.Scanner) {
-	fmt.Println("\n--- Encerramento de Sessão de Carregamento ---")
-
-	fmt.Print("Digite o ID do veículo: ")
-	idVeiculo := lerString(scanner)
-
-	fmt.Print("Digite o ID do ponto de recarga: ")
-	idPontoRecarga := lerString(scanner)
-
-	fmt.Print("Digite a energia consumida (kWh): ")
-	energiaConsumida := lerFloat64(scanner)
-
-	timestamp := time.Now().Format("2006-01-02T15:04:05")
-
-	encerramento := &EncerramentoSessao{
-		IDVeiculo:        idVeiculo,
-		IDPontoRecarga:   idPontoRecarga,
-		EnergiaConsumida: energiaConsumida,
-		Timestamp:        timestamp,
-	}
-
-	enviarMensagem(encerramento)
-}
-
-// Função genérica para enviar uma mensagem (notificação ou consulta) via TCP
-func enviarMensagem(msg Mensagem) {
-	conn, err := net.Dial("tcp", "cloud:8081")
-	if err != nil {
-		fmt.Println("Erro ao conectar:", err)
-		return
-	}
-	defer conn.Close()
-
-	jsonData, err := msg.ToJSON()
+	jsonData, err := json.Marshal(reserva)
 	if err != nil {
 		fmt.Println("Erro ao gerar JSON:", err)
 		return
 	}
 
-	_, err = conn.Write(jsonData)
+	msg := &Message{
+		Type: "reserva",
+		Data: jsonData,
+	}
+
+	enviarMensagem(msg)
+}
+
+// Função para confirmar chegada ao ponto
+func confirmarChegada() {
+	fmt.Println("\n--- Confirmação de Chegada ---")
+
+	fmt.Print("Digite o ID do ponto de recarga: ")
+	var idPontoRecarga string
+	fmt.Scanln(&idPontoRecarga)
+
+	fmt.Print("Digite o nível atual da bateria (%): ")
+	var nivelBateria float64
+	fmt.Scanln(&nivelBateria)
+
+	fmt.Print("Digite até que nível deseja carregar a bateria (%):")
+	var nivelCarregamento float64
+	fmt.Scanln(&nivelCarregamento)
+
+	timestamp := time.Now().Format("2006-01-02T15:04:05")
+
+	confirmacao := &ConfirmacaoChegada{
+		IDVeiculo:      IDVeiculo,
+		IDPontoRecarga: idPontoRecarga,
+		NivelBateria:   nivelBateria,
+		NivelCarregamento: nivelCarregamento,
+		Timestamp:      timestamp,
+	}
+
+	jsonData, err := json.Marshal(confirmacao)
 	if err != nil {
-		fmt.Println("Erro ao enviar dados:", err)
+		fmt.Println("Erro ao gerar JSON:", err)
 		return
 	}
 
-	buffer := make([]byte, 1024)
-	n, err := conn.Read(buffer)
+	msg := &Message{
+		Type: "chegada",
+		Data: jsonData,
+	}
+
+	enviarMensagem(msg)
+}
+
+// Função para encerrar sessão de carregamento
+func encerrarSessao() {
+	fmt.Println("\n--- Encerramento de Sessão de Carregamento ---")
+
+	fmt.Print("Digite o ID do ponto de recarga: ")
+	var idPontoRecarga string
+	fmt.Scanln(&idPontoRecarga)
+
+	fmt.Print("Digite a energia consumida (kWh): ")
+	var energiaConsumida float64
+	fmt.Scanln(&energiaConsumida)
+
+	timestamp := time.Now().Format("2006-01-02T15:04:05")
+
+	encerramento := &EncerramentoSessao{
+		IDVeiculo:        IDVeiculo,
+		IDPontoRecarga:   idPontoRecarga,
+		EnergiaConsumida: energiaConsumida,
+		Timestamp:        timestamp,
+	}
+
+	jsonData, err := json.Marshal(encerramento)
 	if err != nil {
-		fmt.Println("Erro ao receber resposta:", err)
+		fmt.Println("Erro ao gerar JSON:", err)
 		return
 	}
 
-	fmt.Println("Resposta recebida:", string(buffer[:n]))
+	msg := &Message{
+		Type: "encerramento",
+		Data: jsonData,
+	}
+
+	enviarMensagem(msg)
+}
+
+// Função genérica para enviar uma mensagem via TCP
+func enviarMensagem(msg *Message) {
+	globalConnMutex.Lock()
+	defer globalConnMutex.Unlock()
+	
+	if globalConn == nil {
+			fmt.Println("Erro: não há conexão ativa com o servidor")
+			return
+	}
+	
+	jsonData, err := json.Marshal(msg)
+	if err != nil {
+			fmt.Println("Erro ao gerar JSON:", err)
+			return
+	}
+	
+	_, err = globalConn.Write(jsonData)
+	if err != nil {
+			fmt.Println("Erro ao enviar dados:", err)
+			// A reconexão será tratada pela goroutine de recebimento
+			return
+	}
+	
+	fmt.Println("Mensagem enviada com sucesso")
+	// Note que não esperamos pela resposta aqui, pois ela será recebida
+	// pela goroutine receberRespostas() de forma assíncrona
 }
