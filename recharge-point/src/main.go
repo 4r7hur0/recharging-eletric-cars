@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -14,6 +15,8 @@ var (
 	reservationQueue []string
 	mu               sync.Mutex
 	udpConn          *net.UDPConn
+	logger           *log.Logger
+	clientID         string
 )
 
 // ChargingPoint representa o estado atual do ponto de recarga
@@ -35,6 +38,17 @@ type ReservationRequest struct {
 type Message struct {
 	Type string          `json:"type"`
 	Data json.RawMessage `json:"data"`
+}
+
+// logTimestamp returns current timestamp formatted for logging
+func logTimestamp() string {
+	return time.Now().Format("2006-01-02 15:04:05.000")
+}
+
+// logMessage formats and prints a log message with timestamp and component info
+func logMessage(component, level, format string, args ...interface{}) {
+	message := fmt.Sprintf(format, args...)
+	logger.Printf("[%s] [%s] [%s] %s", logTimestamp(), component, level, message)
 }
 
 func generateRandomCoordinates(r *rand.Rand) (float64, float64) {
@@ -60,7 +74,7 @@ func addReserve(vehicleID string) {
 	mu.Lock()
 	defer mu.Unlock()
 	reservationQueue = append(reservationQueue, vehicleID)
-	log.Printf("[FILA] Novo veículo na fila: %s (Tamanho: %d)", vehicleID, len(reservationQueue))
+	logMessage("QUEUE", "INFO", "New vehicle added to queue: %s (Current size: %d)", vehicleID, len(reservationQueue))
 }
 
 func removeFromQueue() string {
@@ -71,23 +85,37 @@ func removeFromQueue() string {
 	}
 	vehicleID := reservationQueue[0]
 	reservationQueue = reservationQueue[1:]
-	log.Printf("[FILA] Veículo %s removido. Fila atual: %d", vehicleID, len(reservationQueue))
+	logMessage("QUEUE", "INFO", "Vehicle %s removed from queue. Current queue size: %d", vehicleID, len(reservationQueue))
 	return vehicleID
 }
 
 func sendStatusUpdate(cp ChargingPoint) {
 	data, err := json.Marshal(cp)
 	if err != nil {
-		log.Printf("[ERRO] Falha ao serializar status: %v", err)
+		logMessage("UDP", "ERROR", "Failed to serialize status: %v", err)
 		return
 	}
+	
 	_, err = udpConn.Write(data)
 	if err != nil {
-		log.Printf("[ERRO] Falha ao enviar status via UDP: %v", err)
+		logMessage("UDP", "ERROR", "Failed to send status via UDP: %v", err)
 		return
 	}
-	log.Printf("[STATUS] Enviado - Disponível: %v, Veículo: %s, Bateria: %d%%, Fila: %d",
-		cp.Available, cp.VehicleID, cp.Battery, cp.Queue)
+	
+	// Format battery status
+	batteryInfo := ""
+	if cp.Battery > 0 {
+		batteryInfo = fmt.Sprintf(", Battery: %d%%", cp.Battery)
+	}
+	
+	// Format vehicle info
+	vehicleInfo := "none"
+	if cp.VehicleID != "" {
+		vehicleInfo = cp.VehicleID
+	}
+	
+	logMessage("STATUS", "INFO", "Update sent - ID: %s, Available: %v, Vehicle: %s%s, Queue: %d", 
+		cp.ID, cp.Available, vehicleInfo, batteryInfo, cp.Queue)
 }
 
 func calculateChargingCost(batteryCharged int) float64 {
@@ -101,22 +129,28 @@ func sendFinalCost(conn net.Conn, vehicleID string, batteryCharged int) {
 		Type: "custo_final",
 		Data: json.RawMessage(fmt.Sprintf(`{"id_veiculo":"%s","custo":%.2f}`, vehicleID, cost)),
 	}
+	
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("[ERRO] Falha ao serializar custo: %v", err)
+		logMessage("PAYMENT", "ERROR", "Failed to serialize cost message for vehicle %s: %v", vehicleID, err)
 		return
 	}
+	
 	_, err = conn.Write(data)
 	if err != nil {
-		log.Printf("[ERRO] Falha ao enviar custo: %v", err)
+		logMessage("PAYMENT", "ERROR", "Failed to send final cost to vehicle %s: %v", vehicleID, err)
 		return
 	}
-	log.Printf("[PAGAMENTO] Custo final para %s: R$%.2f", vehicleID, cost)
+	
+	logMessage("PAYMENT", "INFO", "Final cost for vehicle %s: R$%.2f (Charged: %d%%)", 
+		vehicleID, cost, batteryCharged)
 }
 
 func handleConnection(conn net.Conn, r *rand.Rand) {
 	defer conn.Close()
-	log.Printf("[CONEXÃO] Nova conexão com %s", conn.RemoteAddr())
+	
+	remoteAddr := conn.RemoteAddr().String()
+	logMessage("CONNECTION", "INFO", "New connection established with server at %s", remoteAddr)
 
 	lat, lon := generateRandomCoordinates(r)
 	cp := ChargingPoint{
@@ -126,19 +160,25 @@ func handleConnection(conn net.Conn, r *rand.Rand) {
 		Available: true,
 		Queue:     len(reservationQueue),
 	}
+	
+	clientID = cp.ID
+	logMessage("INIT", "INFO", "New charging point initialized - ID: %s, Location: (%.6f, %.6f)", 
+		cp.ID, cp.Latitude, cp.Longitude)
 
-	log.Printf("[PONTO] Novo ponto iniciado - ID: %s, Localização: (%.4f, %.4f)", cp.ID, cp.Latitude, cp.Longitude)
-
+	// Send initial data to server
 	data, err := json.Marshal(cp)
 	if err != nil {
-		log.Printf("[ERRO] Falha ao serializar ponto: %v", err)
+		logMessage("INIT", "ERROR", "Failed to serialize charging point data: %v", err)
 		return
 	}
+	
 	_, err = conn.Write(data)
 	if err != nil {
-		log.Printf("[ERRO] Falha ao enviar dados do ponto: %v", err)
+		logMessage("INIT", "ERROR", "Failed to send initial data to server: %v", err)
 		return
 	}
+	
+	logMessage("INIT", "INFO", "Initial data sent to server successfully")
 	sendStatusUpdate(cp)
 
 	buffer := make([]byte, 1024)
@@ -146,60 +186,81 @@ func handleConnection(conn net.Conn, r *rand.Rand) {
 		n, err := conn.Read(buffer)
 		if err != nil {
 			if err.Error() == "EOF" {
-				log.Println("[CONEXÃO] Conexão encerrada pelo servidor")
+				logMessage("CONNECTION", "INFO", "Connection closed by server")
 			} else {
-				log.Printf("[ERRO] Falha na leitura: %v", err)
+				logMessage("CONNECTION", "ERROR", "Read operation failed: %v", err)
 			}
 			return
 		}
 
-		log.Printf("[MENSAGEM] Recebida: %s", string(buffer[:n]))
+		rawMsg := string(buffer[:n])
+		logMessage("MESSAGE", "DEBUG", "Received raw data (%d bytes): %s", n, rawMsg)
 
 		var msg Message
 		if err := json.Unmarshal(buffer[:n], &msg); err != nil {
-			log.Printf("[ERRO] Falha ao decodificar mensagem: %v", err)
+			logMessage("MESSAGE", "ERROR", "Failed to decode message: %v - Raw data: %s", err, rawMsg)
 			continue
 		}
 
+		logMessage("MESSAGE", "INFO", "Received message type: %s", msg.Type)
+		
 		mu.Lock()
 		switch msg.Type {
 		case "reserva":
 			var reserve ReservationRequest
 			if err := json.Unmarshal(msg.Data, &reserve); err != nil {
-				log.Printf("[ERRO] Reserva inválida: %v", err)
+				logMessage("RESERVATION", "ERROR", "Invalid reservation request data: %v", err)
 				mu.Unlock()
 				continue
 			}
+			
+			logMessage("RESERVATION", "INFO", "Processing reservation request for vehicle %s", reserve.VehicleID)
+			
 			if isVehicleInQueue(reserve.VehicleID) {
-				log.Printf("[RESERVA] Veículo %s já está na fila", reserve.VehicleID)
+				logMessage("RESERVATION", "WARN", "Vehicle %s is already in queue - position: %d", 
+					reserve.VehicleID, findVehiclePosition(reserve.VehicleID))
+				
 				response := Message{
 					Type: "reserva_response",
 					Data: json.RawMessage(`{"status":"error","message":"Vehicle already in queue"}`),
 				}
 				data, _ := json.Marshal(response)
 				conn.Write(data)
+				
+				logMessage("RESERVATION", "INFO", "Sent duplicate reservation error response to server")
 			} else if len(reservationQueue) >= 5 {
-				log.Printf("[RESERVA] Fila cheia (5 veículos)")
+				logMessage("RESERVATION", "WARN", "Queue is full (maximum 5 vehicles) - rejecting request from %s", 
+					reserve.VehicleID)
+				
 				cp.Available = false
 				cp.Queue = len(reservationQueue)
 				sendStatusUpdate(cp)
+				
 				response := Message{
 					Type: "reserva_response",
 					Data: json.RawMessage(`{"status":"error","message":"Queue full"}`),
 				}
 				data, _ := json.Marshal(response)
 				conn.Write(data)
+				
+				logMessage("RESERVATION", "INFO", "Sent queue full error response to server")
 			} else {
 				addReserve(reserve.VehicleID)
 				cp.Queue = len(reservationQueue)
-				log.Printf("[RESERVA] Reserva confirmada para %s", reserve.VehicleID)
+				
+				logMessage("RESERVATION", "INFO", "Reservation confirmed for vehicle %s - Queue position: %d", 
+					reserve.VehicleID, len(reservationQueue))
+				
 				sendStatusUpdate(cp)
+				
 				response := Message{
 					Type: "reserva_response",
 					Data: json.RawMessage(`{"status":"success","message":"Reserve confirmed"}`),
 				}
 				data, _ := json.Marshal(response)
 				conn.Write(data)
+				
+				logMessage("RESERVATION", "INFO", "Sent successful reservation response to server")
 			}
 
 		case "chegada":
@@ -208,42 +269,73 @@ func handleConnection(conn net.Conn, r *rand.Rand) {
 				NivelBateria      float64 `json:"nivel_bateria"`
 				NivelCarregamento float64 `json:"nivel_carregar"`
 			}
+			
 			if err := json.Unmarshal(msg.Data, &chegada); err != nil {
-				log.Printf("[ERRO] Chegada inválida: %v", err)
+				logMessage("ARRIVAL", "ERROR", "Invalid arrival data: %v - Raw data: %s", 
+					err, string(msg.Data))
 				mu.Unlock()
 				continue
 			}
-			if len(reservationQueue) > 0 && chegada.IDVeiculo == reservationQueue[0] {
-				cp.VehicleID = chegada.IDVeiculo
-				cp.Battery = int(chegada.NivelBateria)
-				batteryToCharge := int(chegada.NivelCarregamento) - int(chegada.NivelBateria)
-				log.Printf("[CARREGAMENTO] Iniciado para %s - Bateria: %d%%, Carregar: %d%%",
-					cp.VehicleID, cp.Battery, batteryToCharge)
-				go simulateCharging(conn, &cp, batteryToCharge)
+			
+			logMessage("ARRIVAL", "INFO", "Vehicle arrival notification - ID: %s, Current Battery: %.1f%%, Target: %.1f%%", 
+				chegada.IDVeiculo, chegada.NivelBateria, chegada.NivelCarregamento)
+			
+			if len(reservationQueue) == 0 {
+				logMessage("ARRIVAL", "WARN", "Vehicle %s arrived but queue is empty", chegada.IDVeiculo)
+				mu.Unlock()
+				continue
 			}
+			
+			if chegada.IDVeiculo != reservationQueue[0] {
+				logMessage("ARRIVAL", "WARN", "Vehicle %s arrived but is not next in queue (expected: %s)", 
+					chegada.IDVeiculo, reservationQueue[0])
+				mu.Unlock()
+				continue
+			}
+			
+			cp.VehicleID = chegada.IDVeiculo
+			cp.Battery = int(chegada.NivelBateria)
+			batteryToCharge := int(chegada.NivelCarregamento) - int(chegada.NivelBateria)
+			
+			logMessage("CHARGING", "INFO", "Starting charging session for vehicle %s - Current: %d%%, Target: %.0f%% (Increase: %d%%)",
+				cp.VehicleID, cp.Battery, chegada.NivelCarregamento, batteryToCharge)
+			
+			go simulateCharging(conn, &cp, batteryToCharge)
 
 		case "encerramento":
 			var encerramento struct {
 				IDVeiculo        string  `json:"id_veiculo"`
 				EnergiaConsumida float64 `json:"energia_consumida"`
 			}
+			
 			if err := json.Unmarshal(msg.Data, &encerramento); err != nil {
-				log.Printf("[ERRO] Encerramento inválido: %v", err)
+				logMessage("SESSION_END", "ERROR", "Invalid session end data: %v", err)
 				mu.Unlock()
 				continue
 			}
+			
+			logMessage("SESSION_END", "INFO", "Processing session end for vehicle %s - Energy consumed: %.1f%%", 
+				encerramento.IDVeiculo, encerramento.EnergiaConsumida)
+			
 			if cp.VehicleID == encerramento.IDVeiculo {
 				batteryCharged := int(encerramento.EnergiaConsumida)
 				cp.Available = true
 				cp.VehicleID = ""
 				cp.Battery = 0
-				removeFromQueue()
+				removedVehicle := removeFromQueue()
 				cp.Queue = len(reservationQueue)
-				log.Printf("[CARREGAMENTO] Concluído para %s - Energia: %d%%",
-					encerramento.IDVeiculo, batteryCharged)
+				
+				logMessage("SESSION_END", "INFO", "Charging session completed for vehicle %s - Total energy: %d%%, Removed from queue: %s",
+					encerramento.IDVeiculo, batteryCharged, removedVehicle)
+				
 				sendStatusUpdate(cp)
 				sendFinalCost(conn, encerramento.IDVeiculo, batteryCharged)
+			} else {
+				logMessage("SESSION_END", "WARN", "Session end received for %s but current vehicle is %s", 
+					encerramento.IDVeiculo, cp.VehicleID)
 			}
+		default:
+			logMessage("MESSAGE", "WARN", "Unknown message type received: %s", msg.Type)
 		}
 		mu.Unlock()
 	}
@@ -257,17 +349,29 @@ func simulateCharging(conn net.Conn, cp *ChargingPoint, batteryToCharge int) {
 	targetBattery := initialBattery + batteryToCharge
 	mu.Unlock()
 
-	log.Printf("[CARREGAMENTO] Iniciado para %s - Alvo: %d%% (+%d%%)",
-		vehicleID, targetBattery, batteryToCharge)
+	logMessage("CHARGING", "INFO", "Charging simulation started for vehicle %s - Initial: %d%%, Target: %d%% (Delta: %d%%)",
+		vehicleID, initialBattery, targetBattery, batteryToCharge)
 
 	for {
 		mu.Lock()
 		if cp.Battery >= targetBattery || cp.VehicleID != vehicleID {
+			if cp.VehicleID != vehicleID {
+				logMessage("CHARGING", "WARN", "Charging interrupted - Vehicle changed from %s to %s", 
+					vehicleID, cp.VehicleID)
+			} else {
+				logMessage("CHARGING", "INFO", "Target battery level reached for vehicle %s: %d%%", 
+					vehicleID, cp.Battery)
+			}
 			mu.Unlock()
 			break
 		}
+		
 		cp.Battery += chargingRate
-		log.Printf("[CARREGAMENTO] %s: %d%%", vehicleID, cp.Battery)
+		progress := float64(cp.Battery-initialBattery) / float64(batteryToCharge) * 100
+		
+		logMessage("CHARGING", "INFO", "Vehicle %s charging: %d%% (Progress: %.1f%%)", 
+			vehicleID, cp.Battery, progress)
+		
 		sendStatusUpdate(*cp)
 		mu.Unlock()
 		time.Sleep(1 * time.Second)
@@ -278,10 +382,12 @@ func simulateCharging(conn net.Conn, cp *ChargingPoint, batteryToCharge int) {
 	cp.Available = true
 	cp.VehicleID = ""
 	cp.Battery = 0
-	removeFromQueue()
+	removedVehicle := removeFromQueue()
 	cp.Queue = len(reservationQueue)
-	log.Printf("[CARREGAMENTO] Concluído para %s - Total carregado: %d%%",
-		vehicleID, batteryCharged)
+	
+	logMessage("CHARGING", "INFO", "Charging completed for vehicle %s - Total charged: %d%%, Vehicle removed: %s",
+		vehicleID, batteryCharged, removedVehicle)
+	
 	sendStatusUpdate(*cp)
 	sendFinalCost(conn, vehicleID, batteryCharged)
 	mu.Unlock()
@@ -290,17 +396,23 @@ func simulateCharging(conn net.Conn, cp *ChargingPoint, batteryToCharge int) {
 		Type: "encerramento",
 		Data: json.RawMessage(fmt.Sprintf(`{"id_veiculo":"%s","energia_consumida":%d}`, vehicleID, batteryCharged)),
 	}
+	
 	data, err := json.Marshal(encerramento)
 	if err != nil {
-		log.Printf("[ERRO] Falha ao serializar encerramento: %v", err)
+		logMessage("SESSION_END", "ERROR", "Failed to serialize session end message: %v", err)
 		return
 	}
-	conn.Write(data)
+	
+	_, err = conn.Write(data)
+	if err != nil {
+		logMessage("SESSION_END", "ERROR", "Failed to send session end message: %v", err)
+		return
+	}
+	
+	logMessage("SESSION_END", "INFO", "Session end notification sent to server for vehicle %s", vehicleID)
 }
 
 func isVehicleInQueue(vehicleID string) bool {
-	mu.Lock()
-	defer mu.Unlock()
 	for _, v := range reservationQueue {
 		if v == vehicleID {
 			return true
@@ -309,31 +421,67 @@ func isVehicleInQueue(vehicleID string) bool {
 	return false
 }
 
-func main() {
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+func findVehiclePosition(vehicleID string) int {
+	for i, v := range reservationQueue {
+		if v == vehicleID {
+			return i + 1
+		}
+	}
+	return -1
+}
 
+func main() {
+	// Set up logger with custom format
+	logger = log.New(os.Stdout, "", 0)
+	
+	// Create a random seed based on current time
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	
+	// Log startup information
+	logMessage("SYSTEM", "INFO", "Charging point client starting up...")
+
+	// Create UDP connection for status updates
 	serverAddr, err := net.ResolveUDPAddr("udp", "localhost:8082")
 	if err != nil {
-		log.Fatalf("[ERRO] Endereço UDP inválido: %v", err)
+		logMessage("SYSTEM", "FATAL", "Invalid UDP address: %v", err)
+		os.Exit(1)
 	}
 
 	udpConn, err = net.DialUDP("udp", nil, serverAddr)
 	if err != nil {
-		log.Fatalf("[ERRO] Falha ao conectar UDP: %v", err)
+		logMessage("SYSTEM", "FATAL", "Failed to establish UDP connection: %v", err)
+		os.Exit(1)
 	}
 	defer udpConn.Close()
+	
+	logMessage("SYSTEM", "INFO", "UDP connection established for status updates (target: %s)", serverAddr.String())
 
-	log.Println("[PONTO] Iniciando ponto de recarga...")
-	for {
+	// Main connection loop - keeps trying to connect to server
+	attempt := 1
+	maxAttempt := 100 // Prevent infinite attempts
+	
+	logMessage("SYSTEM", "INFO", "Initiating connection to central server...")
+	
+	for attempt <= maxAttempt {
+		logMessage("CONNECTION", "INFO", "Connecting to server (attempt %d/%d)...", attempt, maxAttempt)
+		
 		conn, err := net.Dial("tcp", "localhost:8080")
 		if err != nil {
-			log.Printf("[ERRO] Falha na conexão TCP: %v (reconectando em 5s...)", err)
+			logMessage("CONNECTION", "ERROR", "TCP connection failed: %v (will retry in 5s)", err)
 			time.Sleep(5 * time.Second)
+			attempt++
 			continue
 		}
-		log.Println("[CONEXÃO] Conectado ao servidor central")
+		
+		logMessage("CONNECTION", "INFO", "Successfully connected to central server at %s", conn.RemoteAddr().String())
+		attempt = 1 // Reset attempt counter after successful connection
+		
+		// Handle the connection
 		handleConnection(conn, r)
-		log.Println("[CONEXÃO] Reconectando...")
+		
+		logMessage("CONNECTION", "INFO", "Connection lost, attempting to reconnect in 2s...")
 		time.Sleep(2 * time.Second)
 	}
+	
+	logMessage("SYSTEM", "FATAL", "Maximum reconnection attempts reached. Exiting.")
 }
