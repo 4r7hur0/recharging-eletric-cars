@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 	"time"
+
 	"github.com/manifoldco/promptui"
 )
 
@@ -48,12 +49,12 @@ type ReservaPonto struct {
 
 // Estrutura para confirmação de chegada
 type ConfirmacaoChegada struct {
-	IDVeiculo      string `json:"id_veiculo"`
-	IDPontoRecarga string `json:"id_ponto_recarga"`
-	NivelBateria   float64 `json:"nivel_bateria"`
-	NivelCarregamento  float64 `json:"nivel_carregar"`
-	MetodoPagamento string `json:"metodo_pagamento"`
-	Timestamp      string `json:"timestamp"`
+	IDVeiculo         string  `json:"id_veiculo"`
+	IDPontoRecarga    string  `json:"id_ponto_recarga"`
+	NivelBateria      float64 `json:"nivel_bateria"`
+	NivelCarregamento float64 `json:"nivel_carregar"`
+	MetodoPagamento   string  `json:"metodo_pagamento"`
+	Timestamp         string  `json:"timestamp"`
 }
 
 // Estrutura para encerramento de sessão
@@ -67,13 +68,12 @@ type EncerramentoSessao struct {
 /**
 * Estrutura para armazenar a conexão global
 * e um mutex para garantir acesso seguro à conexão.
-*/
+ */
 var (
-    globalConn net.Conn
-    globalConnMutex sync.Mutex
-		IDVeiculo string
+	globalConn      net.Conn
+	globalConnMutex sync.Mutex
+	IDVeiculo       string
 )
-
 
 func main() {
 	if err := inicializarConexao(); err != nil {
@@ -121,29 +121,28 @@ func main() {
 	}
 }
 
-
 // Função para inicializar a conexão TCP persistente
 func inicializarConexao() error {
 	var err error
-	globalConn, err = net.Dial("tcp", "cloud-server:8081")
+	globalConn, err = net.Dial("tcp", "localhost:8081")
 	if err != nil {
-			return err
+		return err
 	}
-	
+
 	// Obter o endereço local da conexão para extrair a porta
 	localAddr := globalConn.LocalAddr().String()
 	_, portStr, err := net.SplitHostPort(localAddr)
 	if err != nil {
-			return fmt.Errorf("erro ao extrair porta: %v", err)
+		return fmt.Errorf("erro ao extrair porta: %v", err)
 	}
-	
+
 	// Gerar ID do carro baseado na porta local
 	IDVeiculo = fmt.Sprintf("CAR%s", portStr)
 	fmt.Printf("Identificação do veículo: %s\n", IDVeiculo)
-	
+
 	// Iniciar goroutine para lidar com respostas assíncronas do servidor
 	go receberRespostas()
-	
+
 	fmt.Println("Conexão estabelecida com o servidor.")
 	return nil
 }
@@ -152,17 +151,17 @@ func inicializarConexao() error {
 func receberRespostas() {
 	buffer := make([]byte, 4096)
 	for {
-			n, err := globalConn.Read(buffer)
-			if err != nil {
-					fmt.Println("Conexão com o servidor perdida:", err)
-					// Tentar reconectar
-					tentarReconectar()
-					return
-			}
-			
-			if n > 0 {
-					fmt.Println("Resposta do servidor:", string(buffer[:n]))
-			}
+		n, err := globalConn.Read(buffer)
+		if err != nil {
+			fmt.Println("Conexão com o servidor perdida:", err)
+			// Tentar reconectar
+			tentarReconectar()
+			return
+		}
+
+		if n > 0 {
+			fmt.Println("Resposta do servidor:", string(buffer[:n]))
+		}
 	}
 }
 
@@ -170,31 +169,30 @@ func receberRespostas() {
 func tentarReconectar() {
 	globalConnMutex.Lock()
 	defer globalConnMutex.Unlock()
-	
+
 	maxTentativas := 5
 	for i := 0; i < maxTentativas; i++ {
-			fmt.Printf("Tentando reconectar (%d/%d)...\n", i+1, maxTentativas)
-			
-			var err error
-			globalConn, err = net.Dial("tcp", "cloud-server:8081")
-			if err == nil {
-					fmt.Println("Reconectado com sucesso!")
-					go receberRespostas() // Reiniciar a goroutine de recepção
-					return
-			}
-			
-			// Esperar antes de tentar novamente com backoff exponencial
-			tempo := time.Duration(1<<uint(i)) * time.Second
-			if tempo > 30*time.Second {
-					tempo = 30 * time.Second
-			}
-			time.Sleep(tempo)
+		fmt.Printf("Tentando reconectar (%d/%d)...\n", i+1, maxTentativas)
+
+		var err error
+		globalConn, err = net.Dial("tcp", "localhost:8081")
+		if err == nil {
+			fmt.Println("Reconectado com sucesso!")
+			go receberRespostas() // Reiniciar a goroutine de recepção
+			return
+		}
+
+		// Esperar antes de tentar novamente com backoff exponencial
+		tempo := time.Duration(1<<uint(i)) * time.Second
+		if tempo > 30*time.Second {
+			tempo = 30 * time.Second
+		}
+		time.Sleep(tempo)
 	}
-	
+
 	fmt.Println("Não foi possível reconectar após várias tentativas. Reinicie o aplicativo.")
 	os.Exit(1)
 }
-
 
 // Função para enviar notificação de bateria
 func enviarNotificacaoBateria() {
@@ -334,7 +332,7 @@ func confirmarChegada() {
 	var nivelCarregamento float64
 	fmt.Scanln(&nivelCarregamento)
 
-  fmt.Println("\nSelecione o método de pagamento:")
+	fmt.Println("\nSelecione o método de pagamento:")
 	fmt.Println("1 - Pix")
 	fmt.Println("2 - Débito em conta")
 	fmt.Println("3 - Cartão de crédito")
@@ -342,7 +340,7 @@ func confirmarChegada() {
 	var opcaoPagamento int
 	fmt.Scanln(&opcaoPagamento)
 
-  metodoPagamento := ""
+	metodoPagamento := ""
 
 	switch opcaoPagamento {
 	case 1:
@@ -357,12 +355,12 @@ func confirmarChegada() {
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	confirmacao := &ConfirmacaoChegada{
-		IDVeiculo:      IDVeiculo,
-		IDPontoRecarga: idPontoRecarga,
-		NivelBateria:   nivelBateria,
+		IDVeiculo:         IDVeiculo,
+		IDPontoRecarga:    idPontoRecarga,
+		NivelBateria:      nivelBateria,
 		NivelCarregamento: nivelCarregamento,
-		MetodoPagamento: metodoPagamento,
-		Timestamp:      timestamp,
+		MetodoPagamento:   metodoPagamento,
+		Timestamp:         timestamp,
 	}
 
 	jsonData, err := json.Marshal(confirmacao)
@@ -418,25 +416,25 @@ func encerrarSessao() {
 func enviarMensagem(msg *Message) {
 	globalConnMutex.Lock()
 	defer globalConnMutex.Unlock()
-	
+
 	if globalConn == nil {
-			fmt.Println("Erro: não há conexão ativa com o servidor")
-			return
+		fmt.Println("Erro: não há conexão ativa com o servidor")
+		return
 	}
-	
+
 	jsonData, err := json.Marshal(msg)
 	if err != nil {
-			fmt.Println("Erro ao gerar JSON:", err)
-			return
+		fmt.Println("Erro ao gerar JSON:", err)
+		return
 	}
-	
+
 	_, err = globalConn.Write(jsonData)
 	if err != nil {
-			fmt.Println("Erro ao enviar dados:", err)
-			// A reconexão será tratada pela goroutine de recebimento
-			return
+		fmt.Println("Erro ao enviar dados:", err)
+		// A reconexão será tratada pela goroutine de recebimento
+		return
 	}
-	
+
 	fmt.Println("Mensagem enviada com sucesso")
 	// Note que não esperamos pela resposta aqui, pois ela será recebida
 	// pela goroutine receberRespostas() de forma assíncrona
