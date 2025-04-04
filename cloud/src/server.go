@@ -7,7 +7,6 @@ import (
 	"net"
 	"sort"
 	"sync"
-	"time"
 )
 
 // Message types for different components
@@ -93,9 +92,6 @@ func handleCarConnection(conn net.Conn) {
 	defer conn.Close()
 
 	carID := conn.RemoteAddr().String()
-	mu.Lock()
-	cars[carID] = conn
-	mu.Unlock()
 
 	fmt.Printf("New car connected: %s\n", carID)
 
@@ -119,6 +115,24 @@ func handleCarConnection(conn net.Conn) {
 		}
 		// Handle different message types from cars
 		switch msg.Type {
+		case "ID":
+			// Handle car ID message
+			var carMsg Car
+			if err := json.Unmarshal(msg.Data, &carMsg); err != nil {
+				fmt.Println("Error unmarshaling car ID message:", err)
+				continue
+			}
+
+			if carMsg.ID == "" {
+				fmt.Println("Error: Car ID is empty")
+				continue
+			}
+
+			mu.Lock()
+			cars[carMsg.ID] = conn
+			mu.Unlock()
+			fmt.Printf("Car ID received: %s\n", carMsg.ID)
+
 		case "bateria":
 			// Handle battery notification
 			var batteryMsg BatteryNotification
@@ -178,25 +192,6 @@ func handleReservation(reservaMsg ReservePoint, carConn net.Conn) {
 		return
 	}
 
-	time.Sleep(time.Second * 2)
-
-	response := Message{
-		Type: "reserva_response",
-		Data: json.RawMessage(`{"status": "success", "message": "Reserve confirmed"}`),
-	}
-
-	data, err = json.Marshal(response)
-	if err != nil {
-		fmt.Println("Error marshaling reservation response:", err)
-		return
-	}
-
-	_, err = carConn.Write(data)
-	if err != nil {
-		fmt.Println("Error sending reservation response to car:", err)
-		return
-	}
-
 }
 
 func sendAvailablePoints(msg BatteryNotification, conn net.Conn) {
@@ -250,21 +245,38 @@ func sendAvailablePoints(msg BatteryNotification, conn net.Conn) {
 func handleChargingPointConnection(conn net.Conn) {
 	defer conn.Close()
 
+	// Buffer para leitura de mensagens
 	buffer := make([]byte, 1024)
+
+	// Lê os dados iniciais do ponto de recarga (espera-se que contenham informações do ponto)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		fmt.Println("Error reading initial data from charging point:", err)
+		return
+	}
+
+	// Desserializa os dados iniciais para obter informações do ponto de recarga
+	var cp ChargingPoint
+	if err := json.Unmarshal(buffer[:n], &cp); err != nil {
+		fmt.Printf("Error unmarshaling initial charging point data: %v\n", err)
+		return
+	}
+
+	// Adiciona o ponto de recarga aos mapas
+	mu.Lock()
+	chargingPointsConn[cp.ID] = conn
+	chargingPoints[cp.ID] = &cp
+	mu.Unlock()
+
+	fmt.Printf("New charging point connected: %s (Location: %.6f, %.6f)\n", cp.ID, cp.Latitude, cp.Longitude)
+
+	// Loop para processar mensagens do ponto de recarga
 	for {
-		// Read initial status or updates
 		n, err := conn.Read(buffer)
-
-		// unmarshal the data
-		var cp ChargingPoint
-		if err := json.Unmarshal(buffer[:n], &cp); err != nil {
-			fmt.Println("Error unmarshaling charging point data:", err)
-			continue
-		}
-
 		if err != nil {
 			fmt.Println("Error reading from charging point:", err)
 			mu.Lock()
+			// Remove o ponto de recarga dos mapas em caso de desconexão
 			delete(chargingPointsConn, cp.ID)
 			delete(chargingPoints, cp.ID)
 			mu.Unlock()
@@ -272,14 +284,46 @@ func handleChargingPointConnection(conn net.Conn) {
 			return
 		}
 
-		mu.Lock()
-		chargingPointsConn[cp.ID] = conn
-		mu.Unlock()
+		// Desserializa a mensagem recebida
+		var msg Message
+		if err := json.Unmarshal(buffer[:n], &msg); err != nil {
+			fmt.Printf("Error unmarshaling message from charging point: %v\n", err)
+			continue
+		}
 
-		// Update charging point data
-		mu.Lock()
-		chargingPoints[cp.ID] = &cp
-		mu.Unlock()
+		// Processa o tipo de mensagem
+		switch msg.Type {
+		case "reserva_response":
+			var response struct {
+				Status    string `json:"status"`
+				Message   string `json:"message"`
+				VehicleID string `json:"vehicle_id"`
+			}
+			if err := json.Unmarshal(msg.Data, &response); err != nil {
+				fmt.Printf("Error unmarshaling reserva_response: %v\n", err)
+				continue
+			}
+
+			// Encaminha a resposta para o carro correspondente
+			mu.RLock()
+			carConn, exists := cars[response.VehicleID]
+			mu.RUnlock()
+			if !exists {
+				fmt.Printf("Car connection not found for vehicle ID: %s\n", response.VehicleID)
+				continue
+			}
+
+			// Envia a resposta para o carro
+			_, err := carConn.Write(buffer[:n])
+			if err != nil {
+				fmt.Printf("Error sending reserva_response to car %s: %v\n", response.VehicleID, err)
+			} else {
+				fmt.Printf("Reservation response forwarded to car %s: %s\n", response.VehicleID, string(buffer[:n]))
+			}
+
+		default:
+			fmt.Printf("Unknown message type received from charging point: %s\n", msg.Type)
+		}
 	}
 }
 
@@ -314,7 +358,6 @@ func main() {
 				fmt.Println("Error accepting car connection:", err)
 				continue
 			}
-			fmt.Println("New car connected")
 			go handleCarConnection(conn)
 		}
 	}()
