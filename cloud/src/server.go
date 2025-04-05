@@ -27,8 +27,14 @@ type ChargingPoint struct {
 
 // Car represents a car in the system
 type Car struct {
-	ID            string `json:"id"`
-	PaymentMethod string `json:"payment_method"`
+	ID            string  `json:"id"`
+	PaymentMethod string  `json:"payment_method"`
+	Debits        []Debit `json:"debits"`
+}
+
+type Debit struct {
+	Amount        float64 `json:"amount"`
+	PaymentMethod string  `json:"payment_method"`
 }
 
 // BatteryNotification represents a battery status update from a car
@@ -59,7 +65,7 @@ type confirmation struct {
 	IDChargingPoint string  `json:"id_ponto_recarga"`
 	LevelBattery    float64 `json:"nivel_bateria"`
 	LevelCharge     float64 `json:"nivel_carregar"`
-	PeymentMethod   string  `json:"metodo_pagamento"`
+	PaymentMethod   string  `json:"metodo_pagamento"`
 	Timestamp       string  `json:"timestamp"`
 }
 
@@ -163,17 +169,47 @@ func handleCarConnection(conn net.Conn) {
 				continue
 			}
 
-			cars[confirmMsg.IDVeicle] = &Car{PaymentMethod: confirmMsg.PeymentMethod}
+			cars[confirmMsg.IDVeicle] = &Car{PaymentMethod: confirmMsg.PaymentMethod}
 
-			handlearrivial(confirmMsg, conn)
-		case "encerramento":
-			// Handle session end
-			// TODO: Implement session end handling
+			handlearrivial(confirmMsg)
+		case "consulta":
+			// Handle consultation request
+			var sortedPoints []ChargingPoint
+			mu.RLock()
+			for _, cp := range chargingPoints {
+				sortedPoints = append(sortedPoints, *cp)
+			}
+			mu.RUnlock()
+
+			sort.Slice(sortedPoints, func(i, j int) bool {
+				return sortedPoints[i].ID < sortedPoints[j].ID
+			})
+
+			response := struct {
+				Type string          `json:"type"`
+				Data []ChargingPoint `json:"data"`
+			}{
+				Type: "lista_pontos",
+				Data: sortedPoints,
+			}
+
+			data, err := json.Marshal(response)
+			if err != nil {
+				fmt.Println("Error marshaling sorted points response:", err)
+				return
+			}
+
+			_, err = conn.Write(data)
+			if err != nil {
+				fmt.Println("Error sending sorted points response:", err)
+				return
+			}
+
 		}
 	}
 }
 
-func handlearrivial(confirmMsg confirmation, carConn net.Conn) {
+func handlearrivial(confirmMsg confirmation) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -398,6 +434,7 @@ func handleChargingPointConnection(conn net.Conn) {
 			// Forward the final cost to the car
 			mu.RLock()
 			carConn, exists := carsConn[finalCost.VehicleID]
+			cars[finalCost.VehicleID].Debits = append(cars[finalCost.VehicleID].Debits, Debit{Amount: finalCost.Cost, PaymentMethod: cars[finalCost.VehicleID].PaymentMethod})
 			mu.RUnlock()
 			if !exists {
 				fmt.Printf("Car connection not found for vehicle ID: %s\n", finalCost.VehicleID)
