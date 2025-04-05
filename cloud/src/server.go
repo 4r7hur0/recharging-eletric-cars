@@ -53,6 +53,14 @@ type ReservePoint struct {
 	Timestamp      string `json:"timestamp"`
 }
 
+type confirmation struct {
+	IDVeicle        string  `json:"id_veiculo"`
+	IDChargingPoint string  `json:"id_ponto_recarga"`
+	LevelBattery    float64 `json:"nivel_bateria"`
+	LevelCharge     float64 `json:"nivel_carregar"`
+	Timestamp       string  `json:"timestamp"`
+}
+
 var (
 	chargingPoints     = make(map[string]*ChargingPoint)
 	chargingPointsConn = make(map[string]net.Conn)
@@ -149,14 +157,56 @@ func handleCarConnection(conn net.Conn) {
 				continue
 			}
 			handleReservation(reservaMsg, conn)
-		case "confirmacao":
+		case "chegada":
 			// Handle arrival confirmation
-			// TODO: Implement arrival confirmation handling
+			var confirmMsg confirmation
+			if err := json.Unmarshal(msg.Data, &confirmMsg); err != nil {
+				fmt.Println("Error unmarshaling confirmation message:", err)
+				continue
+			}
+			handlearrivial(confirmMsg, conn)
 		case "encerramento":
 			// Handle session end
 			// TODO: Implement session end handling
 		}
 	}
+}
+
+func handlearrivial(confirmMsg confirmation, carConn net.Conn) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Find the charging point
+	_, exists := chargingPoints[confirmMsg.IDChargingPoint]
+	if !exists {
+		fmt.Printf("Charging point %s not found\n", confirmMsg.IDChargingPoint)
+		return
+	}
+	// Create message to send to car
+	msg := Message{
+		Type: "chegada",
+		Data: json.RawMessage(fmt.Sprintf(`{
+			"id_veiculo": "%s",
+			"nivel_bateria": %.2f,
+			"nivel_carregar": %.2f
+		}`, confirmMsg.IDVeicle, confirmMsg.LevelBattery, confirmMsg.LevelCharge)),
+	}
+
+	// Marshal the message
+	data, err := json.Marshal(msg)
+	if err != nil {
+		fmt.Println("Error marshaling confirmation message:", err)
+		return
+	}
+	// Send confirmation request to charging point
+	conn := chargingPointsConn[confirmMsg.IDChargingPoint]
+	_, err = conn.Write(data)
+	if err != nil {
+		fmt.Printf("Error sending confirmation request to charging point %s: %v\n",
+			confirmMsg.IDChargingPoint, err)
+		return
+	}
+
 }
 
 func handleReservation(reservaMsg ReservePoint, carConn net.Conn) {
@@ -319,6 +369,67 @@ func handleChargingPointConnection(conn net.Conn) {
 				fmt.Printf("Error sending reserva_response to car %s: %v\n", response.VehicleID, err)
 			} else {
 				fmt.Printf("Reservation response forwarded to car %s: %s\n", response.VehicleID, string(buffer[:n]))
+			}
+
+		case "custo_final":
+			var finalCost struct {
+				VehicleID string  `json:"vehicle_id"`
+				Cost      float64 `json:"cost"`
+			}
+			if err := json.Unmarshal(msg.Data, &finalCost); err != nil {
+				fmt.Printf("Error unmarshaling custo_final: %v\n", err)
+				continue
+			}
+
+			fmt.Printf("%v\n", finalCost)
+
+			// Forward the final cost to the car
+			mu.RLock()
+			carConn, exists := cars[finalCost.VehicleID]
+
+			mu.RUnlock()
+			if !exists {
+				fmt.Printf("Car connection not found for vehicle ID: %s\n", finalCost.VehicleID)
+				continue
+			}
+
+			_, err := carConn.Write(buffer[:n])
+			if err != nil {
+				fmt.Printf("Error sending custo_final to car %s: %v\n", finalCost.VehicleID, err)
+			} else {
+				fmt.Printf("Final cost forwarded to car %s: %s\n", finalCost.VehicleID, string(buffer[:n]))
+			}
+
+		case "encerramento":
+			var encerramento struct {
+				VehicleID      string `json:"id_veiculo"`
+				BatteryCharged int    `json:"energia_consumida"`
+			}
+			if err := json.Unmarshal(msg.Data, &encerramento); err != nil {
+				fmt.Printf("Error unmarshaling encerramento: %v\n", err)
+				continue
+			}
+
+			data, err := json.Marshal(encerramento)
+			if err != nil {
+				fmt.Printf("Error marshaling encerramento message: %v\n", err)
+				continue
+			}
+
+			// Forward encerramento message to the car
+			mu.RLock()
+			carConn, exists := cars[encerramento.VehicleID]
+			mu.RUnlock()
+			if !exists {
+				fmt.Printf("Car connection not found for vehicle ID: %s\n", encerramento.VehicleID)
+				continue
+			}
+
+			_, err = carConn.Write(data)
+			if err != nil {
+				fmt.Printf("Error sending encerramento to car %s: %v\n", encerramento.VehicleID, err)
+			} else {
+				fmt.Printf("Encerramento message forwarded to car %s: %s\n", encerramento.VehicleID, string(data))
 			}
 
 		default:

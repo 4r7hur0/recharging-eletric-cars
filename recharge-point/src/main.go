@@ -124,8 +124,9 @@ func sendFinalCost(conn net.Conn, vehicleID string, batteryCharged int) {
 	cost := calculateChargingCost(batteryCharged)
 	msg := Message{
 		Type: "custo_final",
-		Data: json.RawMessage(fmt.Sprintf(`{"id_veiculo":"%s","custo":%.2f}`, vehicleID, cost)),
+		Data: json.RawMessage(fmt.Sprintf(`{"vehicle_id":"%s","cost":%v}`, vehicleID, cost)),
 	}
+	logMessage("PAYMENT", "INFO", "Sending final cost for vehicle %s: R$%.2f", vehicleID, cost)
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -399,7 +400,7 @@ func simulateCharging(conn net.Conn, cp *ChargingPoint, batteryToCharge int) {
 			sendFinalCost(conn, vehicleID, batteryCharged) // Envia custo zero
 
 			// Envia mensagem de encerramento para o servidor
-			encerramentoMsg := Message{Type: "encerramento", Data: json.RawMessage(fmt.Sprintf(`{"id_veiculo":"%s","energia_consumida":%d}`, vehicleID, batteryCharged))}
+			encerramentoMsg := Message{Type: "encerramento", Data: json.RawMessage(fmt.Sprintf(`{"id_veiculo":"%v","energia_consumida":%v}`, vehicleID, batteryCharged))}
 			data, _ := json.Marshal(encerramentoMsg)
 			_, err := conn.Write(data)
 			if err != nil {
