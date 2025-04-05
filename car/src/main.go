@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/manifoldco/promptui"
 )
 
 // Estrutura para mensagem genérica
@@ -51,6 +53,7 @@ type ConfirmacaoChegada struct {
 	IDPontoRecarga    string  `json:"id_ponto_recarga"`
 	NivelBateria      float64 `json:"nivel_bateria"`
 	NivelCarregamento float64 `json:"nivel_carregar"`
+	MetodoPagamento   string  `json:"metodo_pagamento"`
 	Timestamp         string  `json:"timestamp"`
 }
 
@@ -73,47 +76,47 @@ var (
 )
 
 func main() {
-
-	// Inicializar a conexão com o servidor
-	err := inicializarConexao()
-	if err != nil {
+	if err := inicializarConexao(); err != nil {
 		fmt.Println("Erro ao conectar com o servidor:", err)
 		os.Exit(1)
 	}
 	defer globalConn.Close()
-	for {
-		fmt.Println("\n--- Menu ---")
-		fmt.Println("1. Enviar notificação de bateria")
-		fmt.Println("2. Consultar pontos de recarga disponíveis")
-		fmt.Println("3. Solicitar reserva de ponto")
-		fmt.Println("4. Confirmar chegada ao ponto")
-		fmt.Println("5. Encerrar sessão de carregamento")
-		fmt.Println("6. Sair")
-		fmt.Print("Selecione uma opção: ")
 
-		var opcao int
-		_, err := fmt.Scanln(&opcao)
+	menu := []string{
+		"Enviar notificação de bateria",
+		"Consultar pontos de recarga disponíveis",
+		"Solicitar reserva de ponto",
+		"Confirmar chegada ao ponto",
+		"Encerrar sessão de carregamento",
+		"Sair",
+	}
+
+	for {
+		prompt := promptui.Select{
+			Label: "Selecione uma opção",
+			Items: menu,
+		}
+
+		_, result, err := prompt.Run()
 		if err != nil {
-			fmt.Println("Erro na entrada:", err)
+			fmt.Println("Erro na seleção:", err)
 			continue
 		}
 
-		switch opcao {
-		case 1:
+		switch result {
+		case menu[0]:
 			enviarNotificacaoBateria()
-		case 2:
+		case menu[1]:
 			consultarPontos()
-		case 3:
+		case menu[2]:
 			solicitarReserva()
-		case 4:
+		case menu[3]:
 			confirmarChegada()
-		case 5:
+		case menu[4]:
 			encerrarSessao()
-		case 6:
+		case menu[5]:
 			fmt.Println("Saindo...")
 			os.Exit(0)
-		default:
-			fmt.Println("Opção inválida, tente novamente.")
 		}
 	}
 }
@@ -337,6 +340,26 @@ func confirmarChegada() {
 	var nivelCarregamento float64
 	fmt.Scanln(&nivelCarregamento)
 
+	fmt.Println("\nSelecione o método de pagamento:")
+	fmt.Println("1 - Pix")
+	fmt.Println("2 - Débito em conta")
+	fmt.Println("3 - Cartão de crédito")
+	fmt.Print("Digite o número correspondente: ")
+	var opcaoPagamento int
+	fmt.Scanln(&opcaoPagamento)
+
+	metodoPagamento := ""
+
+	switch opcaoPagamento {
+	case 1:
+		metodoPagamento = "Pix"
+	case 2:
+		metodoPagamento = "Débito em conta"
+	case 3:
+		metodoPagamento = "Cartão de crédito"
+	default:
+		metodoPagamento = "Método de pagamento inválido"
+	}
 	timestamp := time.Now().Format("2006-01-02T15:04:05")
 
 	confirmacao := &ConfirmacaoChegada{
@@ -344,6 +367,7 @@ func confirmarChegada() {
 		IDPontoRecarga:    idPontoRecarga,
 		NivelBateria:      nivelBateria,
 		NivelCarregamento: nivelCarregamento,
+		MetodoPagamento:   metodoPagamento,
 		Timestamp:         timestamp,
 	}
 
