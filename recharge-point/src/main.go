@@ -126,6 +126,9 @@ func sendFinalCost(conn net.Conn, vehicleID string, batteryCharged int) {
 		Type: "custo_final",
 		Data: json.RawMessage(fmt.Sprintf(`{"vehicle_id":"%s","cost":%v}`, vehicleID, cost)),
 	}
+
+	logMessage("PAYMENT", "DEBUG", "Final cost JSON size: %d bytes", len(fmt.Sprintf(`{"vehicle_id":"%s","cost":%v}`, vehicleID, cost)))
+
 	logMessage("PAYMENT", "INFO", "Sending final cost for vehicle %s: R$%.2f", vehicleID, cost)
 
 	data, err := json.Marshal(msg)
