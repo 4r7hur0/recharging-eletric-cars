@@ -20,7 +20,6 @@ var (
 	clientID         string
 )
 
-// ChargingPoint representa o estado atual do ponto de recarga
 type ChargingPoint struct {
 	ID        string  `json:"id"`
 	Latitude  float64 `json:"latitude"`
@@ -31,7 +30,6 @@ type ChargingPoint struct {
 	Battery   int     `json:"battery,omitempty"`
 }
 
-// ReservationRequest representa uma solicitação de reserva
 type ReservationRequest struct {
 	VehicleID string `json:"vehicleid"`
 }
@@ -41,12 +39,10 @@ type Message struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// logTimestamp returns current timestamp formatted for logging
 func logTimestamp() string {
 	return time.Now().Format("2006-01-02 15:04:05.000")
 }
 
-// logMessage formats and prints a log message with timestamp and component info
 func logMessage(component, level, format string, args ...interface{}) {
 	message := fmt.Sprintf(format, args...)
 	logger.Printf("[%s] [%s] [%s] %s", logTimestamp(), component, level, message)
@@ -99,13 +95,11 @@ func sendStatusUpdate(cp ChargingPoint) {
 		return
 	}
 
-	// Format battery status
 	batteryInfo := ""
 	if cp.Battery > 0 {
 		batteryInfo = fmt.Sprintf(", Battery: %d%%", cp.Battery)
 	}
 
-	// Format vehicle info
 	vehicleInfo := "none"
 	if cp.VehicleID != "" {
 		vehicleInfo = cp.VehicleID
@@ -153,47 +147,40 @@ func handleConnection(conn net.Conn, r *rand.Rand) {
 	remoteAddr := conn.RemoteAddr().String()
 	logMessage("CONNECTION", "INFO", "New connection established with server at %s", remoteAddr)
 
-	// --- Geração e envio do estado inicial (sem mutex ainda necessário) ---
+
 	lat, lon := generateRandomCoordinates(r)
-	cp := ChargingPoint{ // Use uma variável local 'cp', não a global
+	cp := ChargingPoint{ 
 		ID:        generateRandomID(r),
 		Latitude:  lat,
 		Longitude: lon,
 		Available: true,
-		// A fila inicial é 0 para este ponto específico, ou você quer sincronizar com a global?
-		// Se for global, precisa de lock aqui, mas geralmente cada ponto começa vazio.
-		// Vamos assumir que começa vazio localmente. Se precisar do estado global, precisa de lock.
-		Queue: 0, // Inicialmente 0 para este ponto
+		Queue: 0, 
 	}
 
-	clientID = cp.ID // ok se clientID for apenas informativo para logs deste client
+	clientID = cp.ID 
 	logMessage("INIT", "INFO", "New charging point initialized - ID: %s, Location: (%.6f, %.6f)",
 		cp.ID, cp.Latitude, cp.Longitude)
 
-	// Send initial data to server
+
 	data, err := json.Marshal(cp)
 	if err != nil {
 		logMessage("INIT", "ERROR", "Failed to serialize charging point data: %v", err)
-		return // Sai se não puder enviar estado inicial
+		return 
 	}
 	_, err = conn.Write(data)
 	if err != nil {
 		logMessage("INIT", "ERROR", "Failed to send initial data to server: %v", err)
-		return // Sai se não puder enviar estado inicial
+		return 
 	}
 	logMessage("INIT", "INFO", "Initial data sent to server successfully")
-	// Envia o status inicial via UDP
-	// (Considerar pegar o tamanho da fila global aqui se necessário, com lock)
 	mu.Lock()
-	cp.Queue = len(reservationQueue) // Atualiza com o tamanho global antes de enviar
+	cp.Queue = len(reservationQueue) 
 	mu.Unlock()
-	sendStatusUpdate(cp) // Envia estado inicial (com tamanho da fila atualizado)
+	sendStatusUpdate(cp) 
 
 	// --- Loop de Leitura de Mensagens ---
 	buffer := make([]byte, 1024)
 	for {
-		// --- É ALTAMENTE RECOMENDADO ADICIONAR UM TIMEOUT DE LEITURA AQUI ---
-		// conn.SetReadDeadline(time.Now().Add(60 * time.Second)) // Exemplo: 60 segundos
 
 		n, err := conn.Read(buffer)
 		if err != nil {
@@ -318,47 +305,6 @@ func handleConnection(conn net.Conn, r *rand.Rand) {
 				}
 			}
 
-		case "encerramento": // Mensagem recebida DO SERVIDOR indicando fim (talvez redundante se o cliente já envia?)
-			var encerramento struct {
-				IDVeiculo        string  `json:"id_veiculo"`
-				EnergiaConsumida float64 `json:"energia_consumida"` // Ou talvez só o ID seja necessário?
-			}
-			if err := json.Unmarshal(msg.Data, &encerramento); err != nil {
-				logMessage("SESSION_END", "ERROR", "Invalid session end data from server: %v", err)
-				// NENHUM continue AQUI!
-			} else {
-				logMessage("SESSION_END", "INFO", "Processing session end from server for vehicle %s", encerramento.IDVeiculo)
-
-				// Verifica se o veículo a encerrar é o que está carregando
-				// (Pode ser que simulateCharging já tenha terminado e limpado cp.VehicleID)
-				if cp.VehicleID == encerramento.IDVeiculo {
-					// Este caso é estranho. Se simulateCharging controla o fim,
-					// por que o servidor mandaria um encerramento também?
-					// Talvez seja um comando para forçar o fim?
-					// Se for forçar, precisaria de uma forma de sinalizar simulateCharging para parar.
-					// Por ora, apenas logamos. Se simulateCharging já limpou, este if falhará.
-					logMessage("SESSION_END", "WARN", "Server sent end for vehicle %s which is currently charging. (No action taken, simulateCharging handles end)", cp.VehicleID)
-
-				} else if findVehiclePosition(encerramento.IDVeiculo) != -1 {
-					// Veículo está na fila, talvez o servidor queira cancelar a reserva?
-					logMessage("SESSION_END", "INFO", "Server sent end for vehicle %s which is in queue. Removing from queue.", encerramento.IDVeiculo)
-					// Remove da fila (implementar função específica se necessário ou adaptar removeFromQueue)
-					tempQueue := []string{}
-					for _, v := range reservationQueue {
-						if v != encerramento.IDVeiculo {
-							tempQueue = append(tempQueue, v)
-						}
-					}
-					reservationQueue = tempQueue
-					cp.Queue = len(reservationQueue)
-					sendStatusUpdate(cp) // Atualiza status com fila menor
-
-				} else {
-					logMessage("SESSION_END", "WARN", "Session end from server received for %s but vehicle not charging or in queue.",
-						encerramento.IDVeiculo)
-				}
-			}
-
 		default:
 			logMessage("MESSAGE", "WARN", "Unknown message type received: %s", msg.Type)
 		}
@@ -428,7 +374,7 @@ func simulateCharging(conn net.Conn, cp *ChargingPoint, batteryToCharge int) {
 		// Pequena pausa antes de verificar/carregar
 		time.Sleep(1 * time.Second)
 
-		var stateToSend ChargingPoint // Para enviar status fora do lock
+		// Removida a declaração de stateToSend que não é mais usada
 		var shouldBreak bool = false
 		var logMsg string = ""
 		var logLvl string = "INFO"
@@ -453,16 +399,13 @@ func simulateCharging(conn net.Conn, cp *ChargingPoint, batteryToCharge int) {
 			}
 			progress := float64(cp.Battery-initialBattery) / float64(batteryToCharge) * 100
 			logMsg = fmt.Sprintf("Vehicle %s charging: %d%% (Progress: %.1f%%)", vehicleID, cp.Battery, progress)
-			stateToSend = *cp // Copia estado para enviar status
+			// Não copiamos mais o estado para envio durante o carregamento
 		}
 		mu.Unlock() // Libera o lock
 
-		// Log e envio de status fora do lock
+		// Log fora do lock (sem envio de status)
 		if logMsg != "" {
 			logMessage("CHARGING", logLvl, "%s", logMsg)
-		}
-		if stateToSend.ID != "" { // Só envia se copiamos um estado válido
-			sendStatusUpdate(stateToSend)
 		}
 
 		if shouldBreak {
@@ -523,7 +466,6 @@ func simulateCharging(conn net.Conn, cp *ChargingPoint, batteryToCharge int) {
 			vehicleID, cp.VehicleID, vehicleID)
 		mu.Unlock() // Libera o lock
 	}
-
 }
 
 func isVehicleInQueue(vehicleID string) bool {
