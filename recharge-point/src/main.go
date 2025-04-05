@@ -152,11 +152,11 @@ func calculateChargingCost(batteryCharged int) float64 {
 	return float64(batteryCharged) * pricePerPercent
 }
 
-func sendFinalCost(conn net.Conn, chargingPointId string, vehicleID string, batteryCharged int) {
+func sendFinalCost(conn net.Conn, vehicleID string, batteryCharged int) {
 	cost := calculateChargingCost(batteryCharged)
 	msg := Message{
 		Type: "custo_final", 
-		Data: json.RawMessage(fmt.Sprintf(`{"id_ponto_recarga":"%s", "id_veiculo":"%s","custo":%.2f,"carga_realizada_percent":%d}`, chargingPointId, vehicleID, cost, batteryCharged)),
+		Data: json.RawMessage(fmt.Sprintf(`{"id_veiculo":"%s","custo":%.2f,"carga_realizada_percent":%d}`, vehicleID, cost, batteryCharged)),
 	}
 
 	data, err := json.Marshal(msg)
@@ -409,10 +409,11 @@ func simulateCharging(ctx context.Context, conn net.Conn, cp *ChargingPoint, han
 				progress = float64(currentBattery-initialBattery) / float64(batteryToCharge) * 100
 			}
 
+			// Apenas registra o progresso no log, mas NÃO envia atualização UDP
 			logMessage("CHARGING", "DEBUG", "[%s] Vehicle %s charging: %d%% (Progress: %.1f%%)", handlerClientID, vehicleID, cp.Battery, progress)
-			cpStateSnapshot := *cp 
 			mu.Unlock()
-			sendStatusUpdate(cpStateSnapshot)
+			
+			// Removido: sendStatusUpdate(cpStateSnapshot)
 
 			if currentBattery >= targetBattery {
 				break chargeLoop 
@@ -445,13 +446,13 @@ func simulateCharging(ctx context.Context, conn net.Conn, cp *ChargingPoint, han
 		finalCpState = *cp 
 		mu.Unlock() 
 
-		// 1. Send final UDP status (now available)
+		// Agora envia apenas UMA atualização de status UDP quando o carregamento termina
 		sendStatusUpdate(finalCpState)
 
 		// 2. Send final cost message TO SERVER via TCP
 		// Check context *before* writing to potentially closed connection
 		if ctx.Err() == nil {
-			sendFinalCost(conn, handlerClientID,vehicleID, actualChargedAmount)
+			sendFinalCost(conn,vehicleID, actualChargedAmount)
 		} else {
 			logMessage("PAYMENT", "WARN", "[%s] Cannot send final cost for %s. Context cancelled.", handlerClientID, vehicleID)
 		}
