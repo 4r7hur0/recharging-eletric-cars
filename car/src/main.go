@@ -136,17 +136,8 @@ func inicializarConexao() error {
 		return fmt.Errorf("erro ao extrair porta: %v", err)
 	}
 
-	// Gerar ID do carro baseado na porta local
 	IDVeiculo = fmt.Sprintf("CAR%s", portStr)
 	fmt.Printf("Identificação do veículo: %s\n", IDVeiculo)
-
-	// Enviar mensagem de identificação para o servidor
-	idMessage := &Message{
-		Type: "ID",
-		Data: json.RawMessage(fmt.Sprintf(`{"id":"%s"}`, IDVeiculo)),
-	}
-
-	enviarMensagem(idMessage)
 
 	// Iniciar goroutine para lidar com respostas assíncronas do servidor
 	go receberRespostas()

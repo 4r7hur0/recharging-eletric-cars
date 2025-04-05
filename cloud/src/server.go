@@ -27,7 +27,8 @@ type ChargingPoint struct {
 
 // Car represents a car in the system
 type Car struct {
-	ID string `json:"id"`
+	ID            string `json:"id"`
+	PaymentMethod string `json:"payment_method"`
 }
 
 // BatteryNotification represents a battery status update from a car
@@ -58,13 +59,15 @@ type confirmation struct {
 	IDChargingPoint string  `json:"id_ponto_recarga"`
 	LevelBattery    float64 `json:"nivel_bateria"`
 	LevelCharge     float64 `json:"nivel_carregar"`
+	PeymentMethod   string  `json:"metodo_pagamento"`
 	Timestamp       string  `json:"timestamp"`
 }
 
 var (
 	chargingPoints     = make(map[string]*ChargingPoint)
 	chargingPointsConn = make(map[string]net.Conn)
-	cars               = make(map[string]net.Conn)
+	carsConn           = make(map[string]net.Conn)
+	cars               = make(map[string]*Car)
 	mu                 sync.RWMutex
 )
 
@@ -99,18 +102,31 @@ func calculateDistance(lat1, lon1, lat2, lon2 float64) float64 {
 func handleCarConnection(conn net.Conn) {
 	defer conn.Close()
 
-	carID := conn.RemoteAddr().String()
+	ID := conn.RemoteAddr().String()
+	_, ID, err := net.SplitHostPort(ID)
+	if err != nil {
+		fmt.Printf("Error extracting port: %v\n", err)
+		return
+	}
 
-	fmt.Printf("New car connected: %s\n", carID)
+	IDVeiculo := fmt.Sprintf("CAR%s", ID)
+
+	// Add car connection to the map
+	mu.Lock()
+	carsConn[IDVeiculo] = conn
+	cars[IDVeiculo] = &Car{ID: IDVeiculo}
+	mu.Unlock()
+	fmt.Printf("Car connected: %s\n", IDVeiculo)
 
 	buffer := make([]byte, 1024)
 	for {
 		n, err := conn.Read(buffer)
 		if err != nil {
 			// remove carID from cars map
-			fmt.Printf("Car disconnected: %s\n", carID)
+			fmt.Printf("Car disconnected: %s\n", IDVeiculo)
 			mu.Lock()
-			delete(cars, carID)
+			delete(carsConn, IDVeiculo)
+			delete(cars, IDVeiculo)
 			mu.Unlock()
 			return
 		}
@@ -123,24 +139,6 @@ func handleCarConnection(conn net.Conn) {
 		}
 		// Handle different message types from cars
 		switch msg.Type {
-		case "ID":
-			// Handle car ID message
-			var carMsg Car
-			if err := json.Unmarshal(msg.Data, &carMsg); err != nil {
-				fmt.Println("Error unmarshaling car ID message:", err)
-				continue
-			}
-
-			if carMsg.ID == "" {
-				fmt.Println("Error: Car ID is empty")
-				continue
-			}
-
-			mu.Lock()
-			cars[carMsg.ID] = conn
-			mu.Unlock()
-			fmt.Printf("Car ID received: %s\n", carMsg.ID)
-
 		case "bateria":
 			// Handle battery notification
 			var batteryMsg BatteryNotification
@@ -164,6 +162,9 @@ func handleCarConnection(conn net.Conn) {
 				fmt.Println("Error unmarshaling confirmation message:", err)
 				continue
 			}
+
+			cars[confirmMsg.IDVeicle] = &Car{PaymentMethod: confirmMsg.PeymentMethod}
+
 			handlearrivial(confirmMsg, conn)
 		case "encerramento":
 			// Handle session end
@@ -356,7 +357,7 @@ func handleChargingPointConnection(conn net.Conn) {
 
 			// Encaminha a resposta para o carro correspondente
 			mu.RLock()
-			carConn, exists := cars[response.VehicleID]
+			carConn, exists := carsConn[response.VehicleID]
 			mu.RUnlock()
 			if !exists {
 				fmt.Printf("Car connection not found for vehicle ID: %s\n", response.VehicleID)
@@ -381,23 +382,33 @@ func handleChargingPointConnection(conn net.Conn) {
 				continue
 			}
 
-			fmt.Printf("%v\n", finalCost)
+			// Create a message to send to the car
+			msg := Message{
+				Type: "custo_final",
+				Data: json.RawMessage(fmt.Sprintf(`{"vehicle_id":"%s", "cost":%.2f, "payment_method":"%s"}`, finalCost.VehicleID, finalCost.Cost, cars[finalCost.VehicleID].PaymentMethod)),
+			}
+
+			// Marshal the message
+			data, err := json.Marshal(msg)
+			if err != nil {
+				fmt.Printf("Error marshaling custo_final message: %v\n", err)
+				continue
+			}
 
 			// Forward the final cost to the car
 			mu.RLock()
-			carConn, exists := cars[finalCost.VehicleID]
-
+			carConn, exists := carsConn[finalCost.VehicleID]
 			mu.RUnlock()
 			if !exists {
 				fmt.Printf("Car connection not found for vehicle ID: %s\n", finalCost.VehicleID)
 				continue
 			}
 
-			_, err := carConn.Write(buffer[:n])
+			_, err = carConn.Write(data)
 			if err != nil {
 				fmt.Printf("Error sending custo_final to car %s: %v\n", finalCost.VehicleID, err)
 			} else {
-				fmt.Printf("Final cost forwarded to car %s: %s\n", finalCost.VehicleID, string(buffer[:n]))
+				fmt.Printf("Final cost forwarded to car %s: %s\n", finalCost.VehicleID, string(msg.Data))
 			}
 
 		case "encerramento":
@@ -418,7 +429,7 @@ func handleChargingPointConnection(conn net.Conn) {
 
 			// Forward encerramento message to the car
 			mu.RLock()
-			carConn, exists := cars[encerramento.VehicleID]
+			carConn, exists := carsConn[encerramento.VehicleID]
 			mu.RUnlock()
 			if !exists {
 				fmt.Printf("Car connection not found for vehicle ID: %s\n", encerramento.VehicleID)
