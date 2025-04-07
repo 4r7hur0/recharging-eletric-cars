@@ -124,7 +124,7 @@ func main() {
 // Função para inicializar a conexão TCP persistente
 func inicializarConexao() error {
 	var err error
-	globalConn, err = net.Dial("tcp", "localhost:8081")
+	globalConn, err = net.Dial("tcp", "server:8081")
 	if err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func tentarReconectar() {
 		fmt.Printf("Tentando reconectar (%d/%d)...\n", i+1, maxTentativas)
 
 		var err error
-		globalConn, err = net.Dial("tcp", "localhost:8081")
+		globalConn, err = net.Dial("tcp", "server:8081")
 		if err == nil {
 			fmt.Println("Reconectado com sucesso!")
 			go receberRespostas() // Reiniciar a goroutine de recepção

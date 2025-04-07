@@ -147,36 +147,34 @@ func handleConnection(conn net.Conn, r *rand.Rand) {
 	remoteAddr := conn.RemoteAddr().String()
 	logMessage("CONNECTION", "INFO", "New connection established with server at %s", remoteAddr)
 
-
 	lat, lon := generateRandomCoordinates(r)
-	cp := ChargingPoint{ 
+	cp := ChargingPoint{
 		ID:        generateRandomID(r),
 		Latitude:  lat,
 		Longitude: lon,
 		Available: true,
-		Queue: 0, 
+		Queue:     0,
 	}
 
-	clientID = cp.ID 
+	clientID = cp.ID
 	logMessage("INIT", "INFO", "New charging point initialized - ID: %s, Location: (%.6f, %.6f)",
 		cp.ID, cp.Latitude, cp.Longitude)
-
 
 	data, err := json.Marshal(cp)
 	if err != nil {
 		logMessage("INIT", "ERROR", "Failed to serialize charging point data: %v", err)
-		return 
+		return
 	}
 	_, err = conn.Write(data)
 	if err != nil {
 		logMessage("INIT", "ERROR", "Failed to send initial data to server: %v", err)
-		return 
+		return
 	}
 	logMessage("INIT", "INFO", "Initial data sent to server successfully")
 	mu.Lock()
-	cp.Queue = len(reservationQueue) 
+	cp.Queue = len(reservationQueue)
 	mu.Unlock()
-	sendStatusUpdate(cp) 
+	sendStatusUpdate(cp)
 
 	// --- Loop de Leitura de Mensagens ---
 	buffer := make([]byte, 1024)
@@ -497,7 +495,7 @@ func main() {
 	logMessage("SYSTEM", "INFO", "Charging point client starting up...")
 
 	// Create UDP connection for status updates
-	serverAddr, err := net.ResolveUDPAddr("udp", "localhost:8082") // Verifique a porta do servidor UDP
+	serverAddr, err := net.ResolveUDPAddr("udp", "server:8082") // Verifique a porta do servidor UDP
 	if err != nil {
 		logMessage("SYSTEM", "FATAL", "Invalid UDP address: %v", err)
 		os.Exit(1)
@@ -521,7 +519,7 @@ func main() {
 	for attempt <= maxAttempt {
 		logMessage("CONNECTION", "INFO", "Connecting to server (attempt %d/%d)...", attempt, maxAttempt)
 
-		conn, err := net.Dial("tcp", "localhost:8080") // Verifique IP/Porta do servidor TCP
+		conn, err := net.Dial("tcp", "server:8080") // Verifique IP/Porta do servidor TCP
 		if err != nil {
 			logMessage("CONNECTION", "ERROR", "TCP connection failed: %v (will retry in 5s)", err)
 			time.Sleep(5 * time.Second)

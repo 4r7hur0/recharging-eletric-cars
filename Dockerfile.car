@@ -1,0 +1,27 @@
+FROM golang:1.24-alpine
+
+WORKDIR /app
+
+# Copie os arquivos de dependências
+COPY go.mod go.sum ./
+
+# Baixe as dependências
+RUN go mod download
+
+# Copie o código-fonte do carro
+COPY ./car/src ./src
+
+# Altere o diretório de trabalho para o subdiretório correto
+WORKDIR /app/src
+
+ENV TERM=xterm-265color
+ENV TTY=true
+
+# Compile o binário
+RUN go build -o car .
+
+# Exponha a porta usada pelo carro
+EXPOSE 8081
+
+# Comando para executar o binário
+CMD [ "./car" ]

@@ -1,0 +1,24 @@
+FROM golang:1.24-alpine
+
+WORKDIR /app
+
+# Copie os arquivos de dependências
+COPY go.mod go.sum ./
+
+# Baixe as dependências
+RUN go mod download
+
+# Copie o restante dos arquivos do projeto
+COPY ./recharge-point/src ./recharge-point/src
+
+# Altere o diretório de trabalho para o subdiretório correto
+WORKDIR /app/recharge-point/src
+
+# Compile o binário
+RUN go build -o recharge-point .
+
+# Exponha as portas usadas pelo ponto de recarga
+EXPOSE 8080 8082
+
+# Comando para executar o binário
+CMD [ "./recharge-point" ]
