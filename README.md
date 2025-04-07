@@ -92,7 +92,7 @@ Este projeto simula um sistema de recarga de carros elétricos, composto por tr�
 2. Execute o seguinte comando:
 
 ```bash
-docker-compose up --build
+docker-compose up --build -d
 ```
 
 3. Para utilizar um container isolado (após o compose), digite o comando:
@@ -100,7 +100,7 @@ docker-compose up --build
 docker attach {id_conatainer}
 ```
 
-4. Para encerar digite o comando:
+4. Para encerrar digite o comando:
 ```bash 
 docker-compose down
 ```
