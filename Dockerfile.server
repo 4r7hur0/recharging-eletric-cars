@@ -1,0 +1,24 @@
+FROM golang:1.24-alpine
+
+WORKDIR /app
+
+# Copie os arquivos de dependências
+COPY go.mod go.sum ./
+
+# Baixe as dependências
+RUN go mod download
+
+# Copie o restante dos arquivos do projeto
+COPY ./cloud/src ./server
+
+# Altere o diretório de trabalho para o subdiretório correto
+WORKDIR /app/server
+
+# Compile o binário
+RUN go build -o server .
+
+# Exponha as portas usadas pelo servidor
+EXPOSE 8080 8081 8082
+
+# Comando para executar o binário
+CMD [ "./server" ]

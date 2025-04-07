@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: server
+    ports:
+      - "8080:8080" # Porta para pontos de recarga
+      - "8081:8081" # Porta para carros
+      - "8082:8082/udp" # Porta para atualizações de status via UDP
+    networks:
+      - recharging-network
+
+  recharge-point:
+    build:
+      context: .
+      dockerfile: Dockerfile.recharge-point
+    container_name: recharge-point
+    depends_on:
+      - server
+    networks:
+      - recharging-network
+
+  car:
+    build:
+      context: .
+      dockerfile: Dockerfile.car
+    container_name: car
+    depends_on:
+      - server
+    networks:
+      - recharging-network
+    stdin_open: true
+    tty: true
+
+networks:
+  recharging-network:
+    driver: bridge
