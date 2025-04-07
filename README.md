@@ -86,6 +86,25 @@ Este projeto simula um sistema de recarga de carros elétricos, composto por tr�
 
 ---
 
+### Usando Docker Compose (recomendado)
+
+1. Certifique-se de estar na raiz do projeto onde está o arquivo `docker-compose.yml`.
+2. Execute o seguinte comando:
+
+```bash
+docker-compose up --build
+```
+
+3. Para utilizar um container isolado (após o compose), digite o comando:
+```bash
+docker attach {id_conatainer}
+```
+
+4. Para encerar digite o comando:
+```bash 
+docker-compose down
+```
+
 ## Comunicação via UDP
 
 O protocolo UDP é utilizado para enviar atualizações de status dos pontos de recarga para o servidor central. Essas atualizações incluem informações como:
