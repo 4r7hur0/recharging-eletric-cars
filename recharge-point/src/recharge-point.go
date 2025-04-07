@@ -492,7 +492,7 @@ func main() {
 	logMessage("SYSTEM", "INFO", "Charging point client starting up...")
 
 	// Set up UDP connection for status broadcasting
-	serverAddr, err := net.ResolveUDPAddr("udp", "cloud:8082")
+	serverAddr, err := net.ResolveUDPAddr("udp", "server:8082")
 	if err != nil {
 		logMessage("SYSTEM", "FATAL", "Invalid UDP address: %v", err)
 		os.Exit(1)
@@ -516,7 +516,7 @@ func main() {
 	for attempt <= maxAttempt {
 		logMessage("CONNECTION", "INFO", "Connecting to server (attempt %d/%d)...", attempt, maxAttempt)
 
-		conn, err := net.Dial("tcp", "cloud:8080")
+		conn, err := net.Dial("tcp", "server:8080")
 		if err != nil {
 			logMessage("CONNECTION", "ERROR", "TCP connection failed: %v (will retry in 5s)", err)
 			time.Sleep(5 * time.Second)
