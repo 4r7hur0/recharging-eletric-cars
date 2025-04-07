@@ -87,7 +87,6 @@ func main() {
 		"Consultar pontos de recarga disponíveis",
 		"Solicitar reserva de ponto",
 		"Confirmar chegada ao ponto",
-		"Encerrar sessão de carregamento",
 		"Sair",
 	}
 
@@ -113,8 +112,6 @@ func main() {
 		case menu[3]:
 			confirmarChegada()
 		case menu[4]:
-			encerrarSessao()
-		case menu[5]:
 			fmt.Println("Saindo...")
 			os.Exit(0)
 		}
@@ -370,41 +367,6 @@ func confirmarChegada() {
 
 	msg := &Message{
 		Type: "chegada",
-		Data: jsonData,
-	}
-
-	enviarMensagem(msg)
-}
-
-// Função para encerrar sessão de carregamento
-func encerrarSessao() {
-	fmt.Println("\n--- Encerramento de Sessão de Carregamento ---")
-
-	fmt.Print("Digite o ID do ponto de recarga: ")
-	var idPontoRecarga string
-	fmt.Scanln(&idPontoRecarga)
-
-	fmt.Print("Digite a energia consumida (kWh): ")
-	var energiaConsumida float64
-	fmt.Scanln(&energiaConsumida)
-
-	timestamp := time.Now().Format("2006-01-02T15:04:05")
-
-	encerramento := &EncerramentoSessao{
-		IDVeiculo:        IDVeiculo,
-		IDPontoRecarga:   idPontoRecarga,
-		EnergiaConsumida: energiaConsumida,
-		Timestamp:        timestamp,
-	}
-
-	jsonData, err := json.Marshal(encerramento)
-	if err != nil {
-		fmt.Println("Erro ao gerar JSON:", err)
-		return
-	}
-
-	msg := &Message{
-		Type: "encerramento",
 		Data: jsonData,
 	}
 
