@@ -14,21 +14,21 @@ import (
 
 // Global variables for managing reservation queue and connections
 var (
-	reservationQueue []string      // Queue of vehicle IDs waiting for charging
-	mu               sync.Mutex    // Mutex to protect shared data access
-	udpConn          *net.UDPConn  // UDP connection for status broadcasts
-	logger           *log.Logger   // Custom logger for timestamp formatting
-	clientID         string        // This charging point's unique identifier
+	reservationQueue []string     // Queue of vehicle IDs waiting for charging
+	mu               sync.Mutex   // Mutex to protect shared data access
+	udpConn          *net.UDPConn // UDP connection for status broadcasts
+	logger           *log.Logger  // Custom logger for timestamp formatting
+	clientID         string       // This charging point's unique identifier
 )
 
 // ChargingPoint represents the state of a charging station
 type ChargingPoint struct {
-	ID        string  `json:"id"`        
-	Latitude  float64 `json:"latitude"`  
-	Longitude float64 `json:"longitude"` 
-	Available bool    `json:"available"` // Whether the point is free for charging
-	Queue     int     `json:"queue_size"`// Number of vehicles in reservation queue
-	VehicleID string  `json:"vehicle_id,omitempty"` // Currently charging vehicle 
+	ID        string  `json:"id"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Available bool    `json:"available"`            // Whether the point is free for charging
+	Queue     int     `json:"queue_size"`           // Number of vehicles in reservation queue
+	VehicleID string  `json:"vehicle_id,omitempty"` // Currently charging vehicle
 	Battery   int     `json:"battery,omitempty"`    // Current battery level of charging vehicle
 }
 
@@ -163,15 +163,15 @@ func handleConnection(conn net.Conn, r *rand.Rand) {
 
 	// Initialize this charging point with random location
 	lat, lon := generateRandomCoordinates(r)
-	cp := ChargingPoint{ 
+	cp := ChargingPoint{
 		ID:        generateRandomID(r),
 		Latitude:  lat,
 		Longitude: lon,
 		Available: true,
-		Queue: 0, 
+		Queue:     0,
 	}
 
-	clientID = cp.ID 
+	clientID = cp.ID
 	logMessage("INIT", "INFO", "New charging point initialized - ID: %s, Location: (%.6f, %.6f)",
 		cp.ID, cp.Latitude, cp.Longitude)
 
@@ -179,18 +179,18 @@ func handleConnection(conn net.Conn, r *rand.Rand) {
 	data, err := json.Marshal(cp)
 	if err != nil {
 		logMessage("INIT", "ERROR", "Failed to serialize charging point data: %v", err)
-		return 
+		return
 	}
 	_, err = conn.Write(data)
 	if err != nil {
 		logMessage("INIT", "ERROR", "Failed to send initial data to server: %v", err)
-		return 
+		return
 	}
 	logMessage("INIT", "INFO", "Initial data sent to server successfully")
 	mu.Lock()
-	cp.Queue = len(reservationQueue) 
+	cp.Queue = len(reservationQueue)
 	mu.Unlock()
-	sendStatusUpdate(cp) 
+	sendStatusUpdate(cp)
 
 	// Main message processing loop
 	buffer := make([]byte, 1024)
@@ -329,7 +329,7 @@ func simulateCharging(conn net.Conn, cp *ChargingPoint, batteryToCharge int) {
 		logMessage("CHARGING", "ERROR", "simulateCharging called with empty vehicle ID in cp")
 		return
 	}
-	
+
 	// Handle case where no charging is needed
 	if batteryToCharge <= 0 {
 		logMessage("CHARGING", "INFO", "No charging needed for vehicle %s (already at/above target).", vehicleID)
@@ -485,14 +485,14 @@ func findVehiclePosition(vehicleID string) int {
 func main() {
 	// Initialize logger
 	logger = log.New(os.Stdout, "", 0)
-	
+
 	// Create random number generator
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	logMessage("SYSTEM", "INFO", "Charging point client starting up...")
 
 	// Set up UDP connection for status broadcasting
-	serverAddr, err := net.ResolveUDPAddr("udp", "localhost:8082")
+	serverAddr, err := net.ResolveUDPAddr("udp", "cloud:8082")
 	if err != nil {
 		logMessage("SYSTEM", "FATAL", "Invalid UDP address: %v", err)
 		os.Exit(1)
@@ -516,7 +516,7 @@ func main() {
 	for attempt <= maxAttempt {
 		logMessage("CONNECTION", "INFO", "Connecting to server (attempt %d/%d)...", attempt, maxAttempt)
 
-		conn, err := net.Dial("tcp", "localhost:8080")
+		conn, err := net.Dial("tcp", "cloud:8080")
 		if err != nil {
 			logMessage("CONNECTION", "ERROR", "TCP connection failed: %v (will retry in 5s)", err)
 			time.Sleep(5 * time.Second)
@@ -525,7 +525,7 @@ func main() {
 		}
 
 		logMessage("CONNECTION", "INFO", "Successfully connected to central server at %s", conn.RemoteAddr().String())
-		attempt = 1 
+		attempt = 1
 
 		// Process connection until it's closed or drops
 		handleConnection(conn, r)
