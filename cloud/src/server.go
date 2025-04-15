@@ -173,38 +173,46 @@ func handleCarConnection(conn net.Conn) {
 
 			handlearrivial(confirmMsg)
 		case "consulta":
-			// Handle consultation request
+			// Handles a consultation request from a car to retrieve a list of charging points
 			var sortedPoints []ChargingPoint
+
+			// Locks the chargingPoints map for reading to ensure thread safety
 			mu.RLock()
 			for _, cp := range chargingPoints {
+				// Appends each charging point to the sortedPoints slice
 				sortedPoints = append(sortedPoints, *cp)
 			}
 			mu.RUnlock()
 
+			// Sorts the charging points by their ID in ascending order
 			sort.Slice(sortedPoints, func(i, j int) bool {
 				return sortedPoints[i].ID < sortedPoints[j].ID
 			})
 
+			// Prepares the response structure to send back to the car
 			response := struct {
-				Type string          `json:"type"`
-				Data []ChargingPoint `json:"data"`
+				Type string          `json:"type"` // Type of the response
+				Data []ChargingPoint `json:"data"` // List of charging points
 			}{
-				Type: "lista_pontos",
-				Data: sortedPoints,
+				Type: "lista_pontos", // Response type indicating a list of points
+				Data: sortedPoints,   // The sorted list of charging points
 			}
 
+			// Serializes the response into JSON format
 			data, err := json.Marshal(response)
 			if err != nil {
+				// Logs an error if the response cannot be marshaled
 				fmt.Println("Error marshaling sorted points response:", err)
 				return
 			}
 
+			// Sends the serialized response back to the car
 			_, err = conn.Write(data)
 			if err != nil {
+				// Logs an error if the response cannot be sent
 				fmt.Println("Error sending sorted points response:", err)
 				return
 			}
-
 		}
 	}
 }
